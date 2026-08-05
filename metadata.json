@@ -1,0 +1,6 @@
+{
+  "name": "The Thought-Line Engine",
+  "description": "A co-creative workflow tool that acts as a creative sparring partner, transforming logical argument structure into a visual transit map.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
