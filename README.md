@@ -2,7 +2,7 @@
 
 > Transform complex essays, debates, and drafts into interactive subway-style topology maps, perform logical audits, conduct AI peer reviews, and export structured analyses directly to Google Docs.
 
-![Argument Transit Map Overview](assets/hero-preview.png)
+![Argument Transit Map Overview](assets/.aistudio/hero-preview.png)
 
 ---
 
