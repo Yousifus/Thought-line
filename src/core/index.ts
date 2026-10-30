@@ -7,3 +7,4 @@ export * from './anchors';
 export * from './provider';
 export * from './prompt';
 export * from './analyze';
+export * from './store';
