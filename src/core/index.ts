@@ -2,3 +2,5 @@
 export * from './analysis';
 export * from './structure';
 export * from './certainty';
+export * from './text';
+export * from './anchors';
