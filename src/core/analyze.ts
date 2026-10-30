@@ -36,9 +36,9 @@ export function schemaForRequest(schema: object): object {
   return strip(schema, true) as object;
 }
 
-/** A value in (1, 100] is a percentage; everything is then clamped into [0, 1]. */
+/** A value in [2, 100] is a percentage; (1, 2) is a slight overshoot and clamps to 1; everything is clamped into [0, 1]. */
 function normalizeExpressed(v: number): number {
-  const scaled = v > 1 && v <= 100 ? v / 100 : v;
+  const scaled = v >= 2 && v <= 100 ? v / 100 : v;
   return Math.min(1, Math.max(0, scaled));
 }
 
@@ -49,7 +49,7 @@ function describeIssue(parsed: { error: { issues: Array<{ path: PropertyKey[]; m
   return `${where}: ${issue.message}`;
 }
 
-async function askOnce(provider: ModelProvider, req: CompletionRequest): Promise<{ ok: true; value: ModelAnalysis } | { ok: false; why: string }> {
+async function askOnce(provider: ModelProvider, req: CompletionRequest): Promise<{ ok: true; value: ModelAnalysis } | { ok: false; why: string; empty?: boolean }> {
   const raw = await provider.complete(req);
   let json: unknown;
   try {
@@ -59,6 +59,10 @@ async function askOnce(provider: ModelProvider, req: CompletionRequest): Promise
   }
   const parsed = ModelAnalysisSchema.safeParse(json);
   if (!parsed.success) return { ok: false, why: describeIssue(parsed) };
+  // A valid but empty reply for a non-empty piece is a miss, not an answer.
+  if (parsed.data.stations.length === 0 && parsed.data.motifs.length === 0) {
+    return { ok: false, why: 'the reply was empty', empty: true };
+  }
   return { ok: true, value: parsed.data };
 }
 
@@ -79,6 +83,7 @@ export async function analyzePiece(
   let result = await askOnce(provider, req);
   if (!result.ok) result = await askOnce(provider, req);
   if (!result.ok) {
+    if (result.empty) throw new AnalysisError('The model found nothing to map in this piece');
     throw new AnalysisError(`The model's answer could not be read after two tries (${result.why}).`);
   }
   const model = result.value;

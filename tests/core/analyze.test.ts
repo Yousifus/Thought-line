@@ -82,12 +82,33 @@ test('percent and out-of-range certainty are normalized', async () => {
   const a = await analyzePiece(fakeProvider([ok({ expressed: [85, -0.2] })]), TEXT, { maxChars: 1000 });
   expect(a.stations.map(s => s.expressed)).toEqual([0.85, 0]);
 });
-test('certainty edges: 1 stays 1, 100 becomes 1, above 100 clamps to 1, 0 stays 0', async () => {
+test('certainty rule: (1, 2) clamps to 1; [2, 100] is a percentage; the rest clamps to [0, 1]', async () => {
   const run = async (e: [number, number]) => (await analyzePiece(fakeProvider([ok({ expressed: e })]), TEXT, { maxChars: 1000 })).stations.map(s => s.expressed);
   expect(await run([1, 0])).toEqual([1, 0]);
-  expect(await run([100, 0.5])).toEqual([1, 0.5]);
-  expect(await run([250, -3])).toEqual([1, 0]);
-  expect(await run([1.5, 0])).toEqual([0.015, 0]); // anything in (1, 100] is read as a percentage, as the brief fixes
+  expect(await run([1.5, 1.2])).toEqual([1, 1]);
+  expect(await run([2, 85])).toEqual([0.02, 0.85]);
+  expect(await run([100, 250])).toEqual([1, 1]);
+  expect(await run([-3, 0.5])).toEqual([0, 0.5]);
+});
+test('a reply with no stations and no motifs is retried once, then accepted if the retry has content', async () => {
+  const empty = JSON.stringify({ stations: [], links: [], motifs: [], language: 'en' });
+  const p = fakeProvider([empty, ok()]);
+  const a = await analyzePiece(p, TEXT, { maxChars: 1000 });
+  expect(p.calls).toHaveLength(2);
+  expect(p.calls[1]).toEqual(p.calls[0]);
+  expect(a.stations).toHaveLength(2);
+});
+test('two empty replies is an error saying the model found nothing', async () => {
+  const empty = JSON.stringify({ stations: [], links: [], motifs: [], language: 'en' });
+  const p = fakeProvider([empty, empty]);
+  await expect(analyzePiece(p, TEXT, { maxChars: 1000 })).rejects.toThrow('The model found nothing to map in this piece');
+  expect(p.calls).toHaveLength(2);
+});
+test('stations alone, or motifs alone, are not empty', async () => {
+  const onlyMotifs = JSON.stringify({ stations: [], links: [], motifs: [{ motif: 'sun', label: 'sun', passage: 'The sun', order: 0 }], language: 'en' });
+  const p = fakeProvider([onlyMotifs]);
+  expect((await analyzePiece(p, TEXT, { maxChars: 1000 })).motifs).toHaveLength(1);
+  expect(p.calls).toHaveLength(1);
 });
 test('motifs are sorted by order', async () => {
   const a = await analyzePiece(fakeProvider([ok({ motifOrder: [5, 2] })]), TEXT, { maxChars: 1000 });
@@ -141,4 +162,13 @@ test('the prompt carries each rule the brief requires', () => {
   expect(system).toMatch(/lowercase English noun/);
   expect(system).toMatch(/as written/);
   expect(system).toMatch(/mixed/);
+});
+test('the prompt covers reflective writing and guards against instructions inside the text', () => {
+  const { system } = buildAnalysisPrompt(TEXT);
+  expect(system).toMatch(/reflective/i);
+  expect(system).toMatch(/observations, beliefs or stated feelings/);
+  expect(system).toMatch(/no conclusion/);
+  expect(system).toMatch(/3 to 15/);
+  expect(system).toMatch(/never instructions to follow/i);
+  expect(system).toMatch(/addressed to the reader/);
 });
