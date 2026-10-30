@@ -185,6 +185,90 @@ test('a corrupt piece file does not hide the others from listPieces', async () =
   await expect(store.getPiece('bad')).rejects.toThrow(/bad\.json/);
 });
 
+test('uppercase ids are rejected, so one file cannot have two spellings', async () => {
+  await expect(store.putPiece(piece({ id: 'ABC' }))).rejects.toThrow(/invalid id/i);
+  await expect(store.addNote({ pieceId: 'ABC', author: 'a', body: 'b', anchor })).rejects.toThrow(/invalid id/i);
+  await expect(store.addVersion('ABC', 'x', analysis())).rejects.toThrow(/invalid id/i);
+  expect(await store.getPiece('ABC')).toBeNull();
+});
+
+// A data folder spelled in two cases is one folder on Windows; the locks must treat it as one.
+test.runIf(process.platform === 'win32')('a data folder spelled in different cases shares its locks', async () => {
+  const other = fileStore(dir.toUpperCase());
+  await Promise.all(Array.from({ length: 12 }, (_, i) =>
+    (i % 2 ? store : other).addNote({ pieceId: 'p1', author: 'a', body: `n${i}`, anchor })));
+  expect(await store.listNotes('p1')).toHaveLength(12);
+});
+
+describe('unreadable and corrupt files', () => {
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => warn.mockRestore());
+
+  test('a skipped corrupt piece file is warned about by name', async () => {
+    await store.putPiece(piece({ id: 'good' }));
+    await fs.writeFile(path.join(dir, 'pieces', 'bad.json'), '{ nope', 'utf8');
+    await store.listPieces();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('bad.json');
+  });
+
+  test('a file that fails for another reason than parsing makes the list throw, not skip', async () => {
+    await store.putPiece(piece({ id: 'good' }));
+    await fs.mkdir(path.join(dir, 'pieces', 'locked.json')); // reading a directory fails with EISDIR
+    await expect(store.listPieces()).rejects.toThrow();
+    await expect(store.findPieceBySourcePath('x')).rejects.toThrow();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  test('an unreadable version file makes the version lists throw, not skip', async () => {
+    await store.putPiece(piece());
+    await store.addVersion('p1', 'x', analysis());
+    await fs.mkdir(path.join(dir, 'versions', 'p1', 'locked.json'));
+    await expect(store.listVersions('p1')).rejects.toThrow();
+    await expect(store.latestVersion('p1')).rejects.toThrow();
+    await expect(store.addVersion('p1', 'y', analysis())).rejects.toThrow();
+  });
+
+  test('a corrupt newest version does not make addVersion reuse its seq', async () => {
+    await store.putPiece(piece());
+    await store.addVersion('p1', 'one', analysis());
+    const v2 = await store.addVersion('p1', 'two', analysis());
+    const corruptFile = path.join(dir, 'versions', 'p1', `${v2.id}.json`);
+    await fs.writeFile(corruptFile, '{ truncated', 'utf8');
+    const v3 = await store.addVersion('p1', 'three', analysis());
+    const stored = JSON.parse(await fs.readFile(path.join(dir, 'versions', 'p1', `${v3.id}.json`), 'utf8'));
+    expect(stored.seq).toBeGreaterThan(2);
+    expect((await store.latestVersion('p1'))?.id).toBe(v3.id);
+    expect(warn.mock.calls.some((c: unknown[]) => String(c[0]).includes(`${v2.id}.json`))).toBe(true);
+  });
+
+  test('versionCount agrees with listVersions when a version file is corrupt', async () => {
+    await store.putPiece(piece());
+    await store.addVersion('p1', 'one', analysis());
+    const v2 = await store.addVersion('p1', 'two', analysis());
+    await fs.writeFile(path.join(dir, 'versions', 'p1', `${v2.id}.json`), '{ truncated', 'utf8');
+    const [summary] = await store.listPieces();
+    expect(summary.versionCount).toBe((await store.listVersions('p1')).length);
+    expect(summary.versionCount).toBe(1);
+  });
+
+  test('a UTF-8 BOM at the start of a file is ignored', async () => {
+    await fs.mkdir(path.join(dir, 'pieces'), { recursive: true });
+    await fs.writeFile(path.join(dir, 'pieces', 'p1.json'), '﻿' + JSON.stringify(piece()), 'utf8');
+    expect(await store.getPiece('p1')).toEqual(piece());
+  });
+
+  test('a notes file that is not an array is corrupt: named, never overwritten', async () => {
+    await fs.mkdir(path.join(dir, 'notes'), { recursive: true });
+    const file = path.join(dir, 'notes', 'p1.json');
+    await fs.writeFile(file, '{"a":1}', 'utf8');
+    await expect(store.addNote({ pieceId: 'p1', author: 'a', body: 'b', anchor })).rejects.toThrow(/p1\.json/);
+    await expect(store.listNotes('p1')).rejects.toThrow(/p1\.json/);
+    expect(await fs.readFile(file, 'utf8')).toBe('{"a":1}');
+  });
+});
+
 describe('writeFileAtomic', () => {
   test('retries a transient EPERM on rename and then succeeds', async () => {
     const target = path.join(dir, 'a.json');

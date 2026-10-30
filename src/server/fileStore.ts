@@ -8,7 +8,8 @@ import type { Note, Piece, PieceSummary, Store, Version } from '../core/store';
 /** A version as stored on disk: `seq` is a per-piece counter that breaks ties between equal `savedAt` values. */
 type StoredVersion = Version & { seq: number };
 
-const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+/** Lowercase only: Windows (and macOS) folders are case-insensitive, so `ABC` and `abc` would be one file. */
+const SAFE_ID = /^[a-z0-9_-]{1,128}$/;
 const RENAME_ATTEMPTS = 6;
 const RENAME_DELAY_MS = 25;
 const TRANSIENT = new Set(['EPERM', 'EBUSY', 'EACCES']);
@@ -50,7 +51,11 @@ export async function writeFileAtomic(file: string, content: string, rename: Ren
 /** Per-key promise chains, shared by every store in this process so two stores over one folder cannot interleave. */
 const chains = new Map<string, Promise<void>>();
 
-function serialize<T>(key: string, job: () => Promise<T>): Promise<T> {
+/** One file, one key: resolved and lowercased, because the same file can be spelled with different case on Windows. */
+const lockKey = (p: string) => path.resolve(p).toLowerCase();
+
+function serialize<T>(target: string, job: () => Promise<T>): Promise<T> {
+  const key = lockKey(target);
   const prev = chains.get(key) ?? Promise.resolve();
   const run = prev.then(job);
   const tail = run.then(() => {}, () => {});
@@ -63,7 +68,15 @@ function checkId(id: string): void {
   if (!SAFE_ID.test(id)) throw new Error(`Invalid id: ${JSON.stringify(id)}`);
 }
 
-async function readJson<T>(file: string): Promise<T | null> {
+/** The file exists but its content is unusable. Distinct from I/O errors (EBUSY, EPERM, ...), which are never swallowed. */
+class CorruptFileError extends Error {
+  constructor(file: string, why: string) {
+    super(`Could not use ${file}: ${why}. The file was left untouched.`);
+    this.name = 'CorruptFileError';
+  }
+}
+
+async function readJson<T>(file: string, valid: (v: unknown) => boolean = () => true): Promise<T | null> {
   let raw: string;
   try {
     raw = await fs.readFile(file, 'utf8');
@@ -71,10 +84,26 @@ async function readJson<T>(file: string): Promise<T | null> {
     if (errCode(e) === 'ENOENT') return null;
     throw e;
   }
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as T;
+    parsed = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   } catch {
-    throw new Error(`Could not parse ${file}: the file is not valid JSON. It was left untouched.`);
+    throw new CorruptFileError(file, 'the file is not valid JSON');
+  }
+  if (!valid(parsed)) throw new CorruptFileError(file, 'the JSON has an unexpected shape');
+  return parsed as T;
+}
+
+const isObject = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** In list views a corrupt file is skipped (and named in a warning); any other error is rethrown. */
+async function readOrSkip<T>(file: string): Promise<T | null> {
+  try {
+    return await readJson<T>(file, isObject);
+  } catch (e) {
+    if (!(e instanceof CorruptFileError)) throw e;
+    console.warn(`[fileStore] skipped ${file}: ${e.message}`);
+    return null;
   }
 }
 
@@ -107,31 +136,27 @@ export function fileStore(dataDir: string): Store {
   const versionsDir = (pieceId: string) => path.join(root, 'versions', pieceId);
   const notesFile = (pieceId: string) => path.join(root, 'notes', `${pieceId}.json`);
 
-  /** Every readable version of a piece. Unreadable files are skipped here so one bad file cannot hide the rest. */
+  /** Every usable version of a piece. A corrupt file is skipped with a warning so it cannot hide the rest; other errors throw. */
   async function readVersions(pieceId: string): Promise<StoredVersion[]> {
     const dir = versionsDir(pieceId);
     const found: StoredVersion[] = [];
     for (const name of await jsonNames(dir)) {
-      try {
-        const v = await readJson<StoredVersion>(path.join(dir, name));
-        if (v) found.push(v);
-      } catch { /* skipped: reported by getVersion */ }
+      const v = await readOrSkip<StoredVersion>(path.join(dir, name));
+      if (v) found.push(v);
     }
     return found.sort(newestFirst);
   }
 
   async function getPiece(id: string): Promise<Piece | null> {
     if (!SAFE_ID.test(id)) return null;
-    return readJson<Piece>(pieceFile(id));
+    return readJson<Piece>(pieceFile(id), isObject);
   }
 
   async function readPieces(): Promise<Piece[]> {
     const pieces: Piece[] = [];
     for (const name of await jsonNames(path.join(root, 'pieces'))) {
-      try {
-        const p = await readJson<Piece>(path.join(root, 'pieces', name));
-        if (p) pieces.push(p);
-      } catch { /* skipped: reported by getPiece */ }
+      const p = await readOrSkip<Piece>(path.join(root, 'pieces', name));
+      if (p) pieces.push(p);
     }
     return pieces;
   }
@@ -144,7 +169,7 @@ export function fileStore(dataDir: string): Store {
         title: p.title,
         privacy: p.privacy,
         updatedAt: p.updatedAt,
-        versionCount: (await jsonNames(versionsDir(p.id))).length,
+        versionCount: (await readVersions(p.id)).length,
       })));
       return summaries.sort((a, b) =>
         (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0) || (a.id < b.id ? -1 : 1));
@@ -169,7 +194,9 @@ export function fileStore(dataDir: string): Store {
       return serialize(versionsDir(pieceId), async () => {
         if (!(await getPiece(pieceId))) throw new Error(`Unknown piece: ${pieceId}`);
         const existing = await readVersions(pieceId);
-        const seq = existing.reduce((m, v) => Math.max(m, v.seq ?? 0), 0) + 1;
+        // Never below the number of version files on disk, so a corrupt (unreadable) file's seq is not reused.
+        const onDisk = (await jsonNames(versionsDir(pieceId))).length;
+        const seq = Math.max(existing.reduce((m, v) => Math.max(m, v.seq ?? 0), 0), onDisk) + 1;
         const stored: StoredVersion = {
           id: randomUUID(), pieceId, savedAt: new Date().toISOString(), text, analysis, seq,
         };
@@ -185,7 +212,7 @@ export function fileStore(dataDir: string): Store {
 
     async getVersion(pieceId: string, versionId: string): Promise<Version | null> {
       if (!SAFE_ID.test(pieceId) || !SAFE_ID.test(versionId)) return null;
-      const v = await readJson<StoredVersion>(path.join(versionsDir(pieceId), `${versionId}.json`));
+      const v = await readJson<StoredVersion>(path.join(versionsDir(pieceId), `${versionId}.json`), isObject);
       return v ? stripSeq(v) : null;
     },
 
@@ -199,7 +226,7 @@ export function fileStore(dataDir: string): Store {
       checkId(input.pieceId);
       const file = notesFile(input.pieceId);
       return serialize(file, async () => {
-        const notes = (await readJson<Note[]>(file)) ?? [];
+        const notes = (await readJson<Note[]>(file, Array.isArray)) ?? [];
         const note: Note = { ...input, id: randomUUID(), createdAt: new Date().toISOString() };
         await writeJson(file, [...notes, note]);
         return note;
@@ -208,7 +235,7 @@ export function fileStore(dataDir: string): Store {
 
     async listNotes(pieceId: string): Promise<Note[]> {
       if (!SAFE_ID.test(pieceId)) return [];
-      return (await readJson<Note[]>(notesFile(pieceId))) ?? [];
+      return (await readJson<Note[]>(notesFile(pieceId), Array.isArray)) ?? [];
     },
   };
 }
