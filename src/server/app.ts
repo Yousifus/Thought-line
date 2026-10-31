@@ -27,7 +27,7 @@ export function buildApp(config: Config, service: Service): express.Express {
 
   // Same order for /mcp: token first, so the MCP transport and its body parsing never see an unauthenticated caller.
   app.use('/mcp', requireToken(config.token), (_req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
-  mountMcp(app, service);
+  mountMcp(app, service, { maxChars: config.maxChars });
 
   // The page holds no data; the token gates the data.
   app.use(express.static(path.resolve(WEB_DIR)));

@@ -43,8 +43,8 @@ function realService(responses: Array<string | Error>): Service {
 }
 
 /** Listens on port 0 of the loopback address and closes with the test. */
-async function listen(service: Service): Promise<string> {
-  const server = buildApp(config, service).listen(0, '127.0.0.1');
+async function listen(service: Service, maxChars = config.maxChars): Promise<string> {
+  const server = buildApp({ ...config, maxChars }, service).listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.once('listening', resolve));
   closers.push(() => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
@@ -72,6 +72,24 @@ describe('the tools over HTTP', () => {
     const { tools } = await client.listTools();
     expect(tools.map(t => t.name).sort()).toEqual(['add_note', 'analyze_piece', 'analyze_text', 'list_pieces', 'read_piece']);
     for (const t of tools) expect(t.description?.length).toBeGreaterThan(40);
+  });
+
+  test('add_note tells the agent to quote exactly, to sign with its own name, and who reads it', async () => {
+    const client = await connect(await listen(realService([])));
+    const { tools } = await client.listTools();
+    const description = tools.find(t => t.name === 'add_note')!.description!;
+    for (const word of ['exactly', 'author', 'Yousef']) expect(description).toContain(word);
+  });
+
+  test('annotations: reads are read-only, writes are never destructive, and only the analyses reach outside', async () => {
+    const client = await connect(await listen(realService([])));
+    const { tools } = await client.listTools();
+    const hints = Object.fromEntries(tools.map(t => [t.name, t.annotations]));
+    expect(hints.list_pieces).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+    expect(hints.read_piece).toMatchObject({ readOnlyHint: true, openWorldHint: false });
+    expect(hints.add_note).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
+    expect(hints.analyze_piece).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: true });
+    expect(hints.analyze_text).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: true });
   });
 
   test('analyze_text, add_note, read_piece: the note comes back with gone: false', async () => {
@@ -153,6 +171,47 @@ describe('the tools over HTTP', () => {
     // Trimmed author is stored trimmed.
     await call(client, 'add_note', { ...base, author: '  claude-echo  ' });
     expect((await service.readPiece(made.pieceId))!.notes[0].author).toBe('claude-echo');
+  });
+});
+
+describe('analyze_text when the text cannot be analysed', () => {
+  test('a text over the limit, or a blank one, creates no piece at all', async () => {
+    const service = realService([ok(), ok()]);
+    const client = await connect(await listen(service, 50));
+    const long = await call(client, 'analyze_text', { title: 't', text: 'x'.repeat(51) });
+    expect(long.isError).toBe(true);
+    expect(long.text).toContain('51 characters');
+    expect(long.text).toContain('limit is 50');
+    expect(long.text).not.toContain('saved as piece');
+    const blank = await client.callTool({ name: 'analyze_text', arguments: { title: 't', text: '   ' } }).then(r => r, () => ({ isError: true }));
+    expect(blank.isError).toBe(true);
+    expect(await service.listPieces()).toEqual([]);
+  });
+
+  test('a failing provider returns the piece id, passes the message through redact, and leaves exactly one piece', async () => {
+    const service = realService([new ProviderError('upstream refused Bearer sk-secret-123'), ok()]);
+    const client = await connect(await listen(service));
+    const res = await call(client, 'analyze_text', { title: 'Tides', text: TEXT });
+    expect(res.isError).toBe(true);
+    expect(res.text).not.toContain('sk-secret-123');
+    expect(res.text).toMatch(/^upstream refused Bearer \[redacted\] \(saved as piece [a-z0-9_-]+; retry with analyze_piece\)$/);
+    const pieces = await service.listPieces();
+    expect(pieces).toHaveLength(1);
+    expect(res.text).toContain(`saved as piece ${pieces[0].id};`);
+    // The advice works: analyze_piece on that id finishes the job without adding a piece.
+    const again = (await call(client, 'analyze_piece', { pieceId: pieces[0].id })).json();
+    expect(again.pieceId).toBe(pieces[0].id);
+    expect(await service.listPieces()).toHaveLength(1);
+  });
+
+  test('an unexpected failure after the piece exists still names the piece, and still hides the cause', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const service = realService([]);
+    const client = await connect(await listen({ ...service, analyze: async () => { throw new Error('ENOENT C:/secret'); } }));
+    const res = await call(client, 'analyze_text', { title: 't', text: TEXT });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/^Internal error \(saved as piece [a-z0-9_-]+; retry with analyze_piece\)$/);
+    expect(res.text).not.toContain('secret');
   });
 });
 

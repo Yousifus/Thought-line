@@ -93,6 +93,7 @@ const tools = {
     description: 'Analyse the current text of an existing piece with the configured model and save the result as a new version. This can take a while, and one analysis runs at a time. Returns the same shape as read_piece, for the new version. A private piece is only ever analysed by the local model.',
     inputSchema: { pieceId: id },
     readOnly: false,
+    openWorld: true,
   },
   analyze_text: {
     description: 'Analyse a draft of your own: files it as a new piece from an agent (privacy defaults to private, which keeps it on the local model), analyses it, and returns the same shape as read_piece. Use it for your own drafts; to read what Yousef wrote, use list_pieces and read_piece.',
@@ -102,6 +103,7 @@ const tools = {
       privacy: z.enum(['private', 'public']).optional(),
     },
     readOnly: false,
+    openWorld: true,
   },
   add_note: {
     description: `Leave a margin note on a passage of a piece. ${QUOTE_ADVICE} If the quote is not in the piece you get an error, so quote a shorter stretch. Add prefix or suffix (the words just before or after) only when the quote appears more than once. author is your own name, for example claude-qalam or claude-echo. Notes are read by Yousef, so write the body for him: say what you noticed and why, plainly.`,
@@ -117,35 +119,55 @@ const tools = {
   },
 } as const;
 
+/** Carries an already-described message through run(), which would otherwise hide it as an internal error. */
+class SavedPieceError extends Error {}
+
 type ToolResult = { content: [{ type: 'text'; text: string }]; isError?: true };
 
 const ok = (value: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true });
 
-/** Known failures say what went wrong; anything else is logged here and reported as "Internal error", never a stack. */
+/** What an agent may be told about a failure: known errors say what went wrong, anything else is logged and hidden. */
+function describe(err: unknown): string {
+  if (err instanceof SavedPieceError || err instanceof NotFoundError) return err.message;
+  if (err instanceof AnalysisError || err instanceof ProviderError) return redact(err.message);
+  console.error('Unexpected error in an MCP tool:', err);
+  return 'Internal error';
+}
+
 async function run(job: () => Promise<unknown>): Promise<ToolResult> {
   try {
     return ok(await job());
   } catch (err) {
-    if (err instanceof NotFoundError) return fail(err.message);
-    if (err instanceof AnalysisError || err instanceof ProviderError) return fail(redact(err.message));
-    console.error('Unexpected error in an MCP tool:', err);
-    return fail('Internal error');
+    return fail(describe(err));
   }
 }
 
-/** The SDK is loaded on the first MCP request, not at startup: it is heavy, and the pages and /api do not need it. */
-const sdk = () => Promise.all([
-  import('@modelcontextprotocol/sdk/server/mcp.js'),
-  import('@modelcontextprotocol/sdk/server/streamableHttp.js'),
-]);
+/**
+ * The SDK is loaded on the first MCP request, not at startup: it is heavy, and the pages and /api do not need it.
+ * One shared promise; a failed load is forgotten so the next request tries again.
+ */
+let sdkLoad: Promise<[typeof import('@modelcontextprotocol/sdk/server/mcp.js'), typeof import('@modelcontextprotocol/sdk/server/streamableHttp.js')]> | undefined;
+function sdk() {
+  sdkLoad ??= Promise.all([
+    import('@modelcontextprotocol/sdk/server/mcp.js'),
+    import('@modelcontextprotocol/sdk/server/streamableHttp.js'),
+  ]).catch(err => { sdkLoad = undefined; throw err; });
+  return sdkLoad;
+}
 
-async function buildMcpServer(service: Service): Promise<McpServer> {
+async function buildMcpServer(service: Service, maxChars: number): Promise<McpServer> {
   const { McpServer } = (await sdk())[0];
   const server = new McpServer({ name: 'thought-line', version: '2.0.0' });
-  const meta = (t: { description: string; readOnly: boolean }) => ({
+  const meta = (t: { description: string; readOnly: boolean; openWorld?: boolean }) => ({
     description: t.description,
-    annotations: { readOnlyHint: t.readOnly, openWorldHint: false },
+    annotations: {
+      readOnlyHint: t.readOnly,
+      // Only the tools that write say so: they add notes or versions and never remove or overwrite anything.
+      ...(t.readOnly ? {} : { destructiveHint: false }),
+      // A public piece can be sent to a remote provider; everything else stays inside the library.
+      openWorldHint: t.openWorld === true,
+    },
   });
 
   server.registerTool('list_pieces', { ...meta(tools.list_pieces), inputSchema: tools.list_pieces.inputSchema }, () =>
@@ -168,11 +190,20 @@ async function buildMcpServer(service: Service): Promise<McpServer> {
 
   server.registerTool('analyze_text', { ...meta(tools.analyze_text), inputSchema: tools.analyze_text.inputSchema }, ({ title, text, privacy }) =>
     run(async () => {
+      // A text that cannot be analysed creates nothing, so retrying it adds no drafts to the library.
+      if (text.length > maxChars) {
+        throw new AnalysisError(`This piece is ${text.length} characters; the limit is ${maxChars}. Split it or raise TL_MAX_CHARS.`);
+      }
       const piece = await service.createPiece({ title, text, privacy: privacy ?? 'private', source: { kind: 'agent' } });
-      const version = await service.analyze(piece.id);
-      const view = await service.readPiece(piece.id, version.id);
-      if (!view) throw new NotFoundError('Piece not found');
-      return toReading(view);
+      try {
+        const version = await service.analyze(piece.id);
+        const view = await service.readPiece(piece.id, version.id);
+        if (!view) throw new NotFoundError('Piece not found');
+        return toReading(view);
+      } catch (err) {
+        // The piece exists now; say so, or each retry would add another draft the agent cannot see.
+        throw new SavedPieceError(`${describe(err)} (saved as piece ${piece.id}; retry with analyze_piece)`);
+      }
     }));
 
   server.registerTool('add_note', { ...meta(tools.add_note), inputSchema: tools.add_note.inputSchema }, input =>
@@ -197,12 +228,12 @@ const bodyErrors: ErrorRequestHandler = (err, _req, res, _next) => {
  * DELETE (which only make sense with sessions) answer 405. The caller must have put the token check on `/mcp`
  * BEFORE calling this; routes registered here run after it, so body parsing never sees an unauthenticated caller.
  */
-export function mountMcp(app: express.Express, service: Service): void {
+export function mountMcp(app: express.Express, service: Service, opts: { maxChars: number }): void {
   const router = express.Router();
 
   router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
     try {
-      const server = await buildMcpServer(service);
+      const server = await buildMcpServer(service, opts.maxChars);
       const { StreamableHTTPServerTransport } = (await sdk())[1];
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       res.on('close', () => { void transport.close(); void server.close(); });
