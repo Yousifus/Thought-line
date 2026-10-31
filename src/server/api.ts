@@ -39,7 +39,7 @@ const route = (fn: (req: Request, res: Response) => Promise<void> | void): Reque
   };
 
 /** A bearer token must never travel out inside an upstream error message. */
-const redact = (message: string) => message.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+export const redact = (message: string) => message.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
 
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (res.headersSent) return;
