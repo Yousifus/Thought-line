@@ -1,129 +1,152 @@
-# 🚇 Argument Transit Map
+# Thought-line
 
-> Transform complex essays, debates, and drafts into interactive subway-style topology maps, perform logical audits, conduct AI peer reviews, and export structured analyses directly to Google Docs.
+Thought-line reads a piece of writing with a model that runs on your own machine and shows it as two maps. The **Logic** map draws the claims and what supports them as a transit map, and marks where a claim is stated more surely than its support allows. The **Thought** map follows the images and motifs through the piece, in the order they appear. AI agents can read the maps over MCP and leave margin notes on the passages they are about.
 
-![Argument Transit Map Overview](assets/.aistudio/hero-preview.png)
+It is a local tool. You bring your own local model, served through an OpenAI-compatible endpoint such as LM Studio or llama.cpp. A cloud key is optional, and it is only ever used for pieces you have marked public.
 
----
+![A Logic map of a short sample piece, with one agent note in the margin](docs/screenshot.jpg)
 
-## 🌟 Overview
+Status: this is the first working version. The interface is being redesigned, and a desktop app for Windows and macOS is planned. A public bring-your-own-key version is planned too.
 
-**Argument Transit Map** is an open-source argumentation engine designed to illuminate the hidden structure of persuasive writing. Instead of reviewing drafts line-by-line, it maps logical premises as interconnected subway lines, station nodes, interchange junctions, logical loops, and dead-end conclusions.
+## Requirements
 
-Whether you are a student, researcher, lawyer, philosopher, or writer, Argument Transit Map provides actionable clarity on where your argument holds strong and where it derails.
+- Node 22 or newer.
+- A local model behind an OpenAI-compatible server that supports structured output (`response_format` with a JSON schema). LM Studio and llama.cpp both do. A model that handles your writing language well matters more than size; see "Model" below.
+- Optional: Tailscale, to reach the tool from your other machines.
 
----
+## Install
 
-## ✨ Core Features
-
-* 🗺️ **Interactive Transit Map**: Visual subway topology featuring station nodes, interchange junctions, circular logic loops, and dead ends.
-* 🛡️ **Logical Integrity Audit**: In-depth fallacy detection with 0–100 overall integrity scoring, severity indicators, and actionable repair recommendations.
-* 👥 **Model Council Peer Review**: Multi-perspective critiques from specialized AI personas evaluating counter-arguments, evidence quality, and rhetoric.
-* ⏳ **Past-Self Dialectical Debate**: Engage in turn-based AI debates against former versions of your own writing persona to pressure-test claims.
-* 📄 **Google Workspace Export**: 1-click export converting full transit maps, critiques, and audit logs into beautifully formatted Google Docs in your Google Drive.
-* 💾 **Session Management & Comparison**: Save local sessions, compare past revisions side-by-side, and track draft improvements over time.
-
----
-
-## 🚀 Quick Start Guide
-
-### Option 1: Live Web App (No Installation Needed)
-For the fastest, non-technical experience, access the live hosted application directly in your browser without installing anything locally:
-* **Live Web App**: [https://ais-dev-ljcpimrevbqdlccdozbrnr-127269587999.europe-west2.run.app](https://ais-dev-ljcpimrevbqdlccdozbrnr-127269587999.europe-west2.run.app)
-
----
-
-### Option 2: Running Locally on Your Machine
-
-Follow these simple steps to run the application on your own computer:
-
-#### Prerequisites
-1. **Node.js** (v18.0 or higher) — [Download Node.js](https://nodejs.org)
-2. **Git** — [Download Git](https://git-scm.com)
-3. **A free Gemini API Key** — [Get your API Key from Google AI Studio](https://aistudio.google.com/app/apikey)
-
----
-
-#### Step 1: Clone the Repository
-Open your terminal (macOS/Linux) or Command Prompt/PowerShell (Windows) and run:
-```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY.git
-cd YOUR_REPOSITORY
 ```
-
-#### Step 2: Install Dependencies
-Run the install command to download all required packages:
-```bash
+git clone <this repository>
+cd thought-line
 npm install
+npm run build
 ```
 
-#### Step 3: Configure Environment Variables
-Create a file named `.env` in the root folder of the project (or copy `.env.example`):
-```bash
-cp .env.example .env
-```
+`npm run build` builds the web page the server serves. Run it again after pulling changes.
 
-Open `.env` in any text editor and add your Gemini API Key:
-```env
-GEMINI_API_KEY="AIzaSyYourGeminiApiKeyHere"
-```
+## Configure
 
-#### Step 4: Start the Application
-Run the local development server:
-```bash
-npm run dev
-```
+Copy `.env.example` to `.env` and edit it. `.env` is gitignored; never commit it.
 
-Open your browser and navigate to:
-```
-http://localhost:3000
-```
+| Variable | What it does |
+|---|---|
+| `TL_TOKEN` | Required. The bearer token every `/api` and `/mcp` request must carry. At least 24 characters, no spaces. The placeholder from `.env.example` is refused. Make one with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. |
+| `TL_HOST` | The address to listen on. Default `127.0.0.1`. Use your Tailscale address to reach it from other machines. The server refuses to start if this is `0.0.0.0`, `::` or anything else that binds every interface. |
+| `TL_PORT` | Default `4390`. |
+| `TL_DATA_DIR` | Where pieces and analyses are stored, as plain files. Default `./data`. |
+| `TL_MAX_CHARS` | The longest piece the tool will analyse, in characters. Default `24000`. A longer piece is refused with a message rather than cut. |
+| `TL_LOCAL_BASE_URL` | The OpenAI-compatible endpoint of your local model, for example `http://127.0.0.1:1234/v1`. Private writing is sent here. |
+| `TL_LOCAL_MODEL` | The model id to ask for. |
+| `TL_LOCAL_ALLOW_HOST` | See the house rule below. Normally empty. |
+| `TL_CLOUD_BASE_URL`, `TL_CLOUD_MODEL`, `TL_CLOUD_API_KEY` | Optional cloud model, used only for pieces marked public. Set all three or none. |
+| `TL_FIXTURE_ANALYSIS` | Development only. A path to a canned analysis; the tool serves it instead of calling a model, so you can try the interface without one. |
+| `TL_EVAL_MODELS` | Used by `npm run eval` only. Comma-separated model ids loaded on `TL_LOCAL_BASE_URL`. |
 
----
+**The house rule.** `TL_LOCAL_BASE_URL` has to point at a machine in the house: this machine (`localhost`, `127.x.x.x`), a private LAN address (`10.x`, `172.16-31.x`, `192.168.x`), a Tailscale address (`100.64.0.0/10`) or a `*.local` name. Anything else is refused at startup, because private writing is sent to that endpoint. If your model really lives at another name, such as a Tailscale MagicDNS name like `box.tailnet.ts.net`, put exactly that hostname (no scheme, no port) in `TL_LOCAL_ALLOW_HOST` to say so on purpose.
 
-## 🛠️ Project Architecture
-
-* **Frontend**: React 18, Vite, Tailwind CSS, Motion (Framer Motion), Lucide Icons
-* **Backend**: Express.js server on Node.js
-* **AI Engine**: `@google/genai` TypeScript SDK utilizing `gemini-2.5-flash`
-* **Google Workspace Integration**: Firebase Auth with OAuth 2.0 scopes (`documents`, `drive.file`) for seamless Google Docs generation
+## Run
 
 ```
-├── server.ts                       # Express backend proxy for Gemini API & Vite dev server
-├── src/
-│   ├── App.tsx                     # Main application layout & state machine
-│   ├── components/
-│   │   ├── TransitMap.tsx          # SVG Transit network canvas & station rendering
-│   │   ├── ExecutiveSummaryView.tsx# High-level executive summary & critique dashboard
-│   │   ├── GoogleWorkspaceExportModal.tsx # Google Docs export UI & authentication
-│   │   ├── ModelCouncilView.tsx    # Multi-persona peer review interface
-│   │   ├── PastSelfDebateModal.tsx # Dialectical AI debate engine
-│   │   └── SessionHistoryModal.tsx # Local session manager & comparison tool
-│   ├── lib/
-│   │   ├── googleDocsExport.ts     # HTML-to-Google Doc Drive API conversion
-│   │   └── workspaceAuth.ts        # Firebase Auth & Google OAuth scope handler
-│   └── types.ts                    # Global TypeScript data schemas
-└── README.md
+npm start
 ```
 
----
+Open `http://<TL_HOST>:<TL_PORT>` in a browser. The page asks for your token once and keeps it in that browser.
 
-## 💡 How to Customize & Fork
+To use it from your other machines, run it on the machine that holds the model and the data, set `TL_HOST` to that machine's Tailscale address (find it with `tailscale ip -4`), and open `http://<that address>:4390` from anywhere on your tailnet. Nothing is exposed beyond it.
 
-This repository is built to be modular and open source. Here are popular ways to customize it for your needs:
+## Import your writing
 
-* **Add Custom AI Personas**: Update `server.ts` under the `/api/analyze-council` endpoint to define new reviewer personas tailored to your industry (e.g., Legal Scholar, Scientific Peer Reviewer, Investigative Journalist).
-* **Adjust Transit Line Algorithms**: Customize `src/components/TransitMap.tsx` to tweak subway line rendering, curve geometry, or station node physics.
-* **Integrate Custom Databases**: Replace local storage persistence with Firestore or PostgreSQL for multi-user collaboration.
+Import a folder of `.md`, `.txt`, `.html` or `.docx` files:
 
----
+```
+npm run import -- "C:\path\to\writing"
+npm run import -- "C:\path\to\site\writing" --public
+npm run import -- "C:\path\to\writing" --analyze
+```
 
-## 📄 License
+- **Stop the server first.** The importer refuses to run while the server is up, because only one process may write the data.
+- Pieces are **private by default**. Use `--public` for pieces that are already published, such as site posts; only public pieces can ever go to a cloud model.
+- Importing alone does not call any model. Add `--analyze` to analyse each piece as it is imported.
+- Importing the same folder again updates the text of pieces that changed but keeps their titles, and it **overwrites any edits you made to that text in the app**. Re-import only files you still edit on disk.
+- The command prints counts and the names of files that failed, never the writing itself.
 
-Distributed under the **MIT License**. See `LICENSE` for details.
+## Connect an agent
 
----
+Any MCP client that speaks Streamable HTTP can connect. With Claude Code:
 
-## ❤️ Contributing
+```
+claude mcp add --transport http thought-line http://<tailscale-ip>:4390/mcp --header "Authorization: Bearer <token>"
+```
 
-Contributions, feedback, and pull requests are welcome! Feel free to open an issue or submit a PR to help improve Argument Transit Map.
+For clients that only speak stdio, bridge with `mcp-remote`:
+
+```
+npx mcp-remote http://<host>:4390/mcp --header "Authorization: Bearer ${TL_TOKEN}"
+```
+
+with `TL_TOKEN` set in that client's environment.
+
+A long analysis returns only when it has finished, and one analysis runs at a time. A client with a short request timeout may give up before the answer arrives; the server does not cancel the analysis when a client gives up, so read the result with `read_piece` afterwards.
+
+The five tools:
+
+- `list_pieces`: every piece, newest first, with its id, title, privacy and how many analysed versions it has.
+- `read_piece`: one piece with its text, stations, links, motifs and margin notes, flattened into one object.
+- `analyze_piece`: analyse the current text of an existing piece with the configured model and save a new version.
+- `analyze_text`: file a draft of the agent's own as a new piece (private unless said otherwise), analyse it and return the result.
+- `add_note`: leave a margin note on a quoted passage of a piece.
+
+## Privacy
+
+- A new piece is private. A private piece is only ever sent to the local model, and the code refuses to route it anywhere else.
+- A public piece is sent to the cloud model if you configured one, and to the local model otherwise.
+- The tool makes no other network calls: no telemetry, no analytics, no fonts or scripts from a CDN.
+- Your pieces, analyses and evaluation results live in `data/` and `eval/`. Both are gitignored and stay on your machine, as does `.env`.
+- Every `/api` and `/mcp` request needs the bearer token, and the server will not listen on all interfaces.
+
+## Model
+
+The default local model is chosen by running `npm run eval` on real pieces and marking the results by hand. The tally of marks goes here once it has been run:
+
+| Model | Logic right | Thought right | Seconds per piece |
+|---|---|---|---|
+| | | | |
+
+Chosen model: not yet chosen.
+
+### How to run the evaluation
+
+1. Load the candidate models in your local server and set `TL_EVAL_MODELS` to their ids.
+2. List a handful of real pieces, a mix of personal writing and posts, in `eval/samples.local.json`:
+   `[{ "path": "C:/writing/piece.md", "label": "essay-1" }]`. Labels become file names, so keep them short and distinct.
+3. Run `npm run eval`. For every model and piece it writes `eval/out/<model>/<label>.json` and one marking sheet, `eval/out/REVIEW.md`, which lists the station count, jumps, dead ends, loops, the motif path and the time taken, with two boxes to tick: `Logic right?` and `Thought right?`.
+4. Tick the boxes. The model with the most ticks becomes `TL_LOCAL_MODEL`; if two are tied, the faster one wins.
+
+The evaluation only talks to `TL_LOCAL_BASE_URL`, never to a cloud model, and it prints progress, counts and paths, never your text. With `TL_FIXTURE_ANALYSIS` set it runs against the canned analysis instead, which is a quick way to check the script itself.
+
+## First run
+
+The steps for setting this up on the machine that will hold the model:
+
+1. Install it (above), set `.env` with `TL_HOST` as that machine's Tailscale address and a fresh `TL_TOKEN`, and start your local model server.
+2. Pick three candidate models that fit your GPU memory with room for a context of 8k tokens or more, with good structured output and good support for your writing language. Note why you picked each.
+3. Choose five or six pieces, a mix of personal writing and posts, list them in `eval/samples.local.json` and run `npm run eval`.
+4. Mark `eval/out/REVIEW.md`, set `TL_LOCAL_MODEL` to the winner and record the tally in "Model" above.
+5. Stop the server if it is running, import your writing folder (private) and your site's writing folder (`--public`), then start it.
+6. Connect your agents to `/mcp` on each machine, and check that `list_pieces` returns your pieces.
+
+## Development
+
+```
+npm run dev:server   # the API and MCP server, restarting on change
+npm run dev:web      # the web page, with hot reload
+npm test
+npm run typecheck
+```
+
+`src/core` is pure: it holds the analysis schema, the certainty rule, the structure and the prompt, and imports nothing from Node. A test enforces that.
+
+## License
+
+MIT. See `LICENSE`.
