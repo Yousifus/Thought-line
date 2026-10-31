@@ -1,6 +1,7 @@
 // Tests for folder import: file types, titles, re-runs, privacy, canonical paths, and the CLI's "server is running" guard.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -164,6 +165,51 @@ test('a bad file is recorded and the run continues; empty files fail with a reas
   expect(result.failed.every(f => f.error.length > 0)).toBe(true);
 });
 
+test('html <pre> content is kept, with its line break and indentation', async () => {
+  const html = '<body><article><h1>Verse</h1><p>Before.</p><pre>  first line &amp; more\n    second line\n</pre><p>After.</p></article></body>';
+  const out = await extractText(write('verse.html', html));
+  expect(out?.text).toBe('Verse\n\nBefore.\n\n  first line & more\n    second line\n\nAfter.');
+});
+
+test('an unreadable subfolder is recorded and the rest is still imported', async () => {
+  write('good/a.txt', 'Neutral words in a readable folder.');
+  write('locked/b.txt', 'Neutral words in a folder that cannot be read.');
+  write('top.md', '# Top\n\nNeutral words at the top.');
+  const lockedDir = fs.realpathSync(path.join(folder, 'locked'));
+  const real = fsp.readdir;
+  const spy = vi.spyOn(fsp, 'readdir').mockImplementation(((p: unknown, ...rest: unknown[]) => {
+    if (String(p) === lockedDir) return Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+    return (real as (...a: unknown[]) => unknown)(p, ...rest);
+  }) as typeof fsp.readdir);
+  try {
+    const result = await importFolder({ service: make(), store }, folder, { privacy: 'private' });
+    expect(result.created).toBe(2);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0].path).toBe(lockedDir);
+    expect(result.failed[0].error).toMatch(/EACCES/);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test('a file over 5 MB is recorded as failed without being read', async () => {
+  const big = write('big.txt', 'x');
+  fs.truncateSync(big, 5 * 1024 * 1024 + 1);
+  const exactly = write('limit.txt', 'x');
+  fs.truncateSync(exactly, 5 * 1024 * 1024);
+  write('small.txt', 'Neutral small file.');
+  const readSpy = vi.spyOn(fsp, 'readFile');
+  try {
+    const result = await importFolder({ service: make(), store }, folder, { privacy: 'private' });
+    expect(result.failed).toEqual([{ path: fs.realpathSync(big), error: 'File is larger than 5 MB' }]);
+    // 5 MB exactly is allowed (it is NUL bytes, which is text enough for this test); only the big file is refused.
+    expect(result.created).toBe(2);
+    expect(readSpy.mock.calls.some(c => String(c[0]) === fs.realpathSync(big))).toBe(false);
+  } finally {
+    readSpy.mockRestore();
+  }
+});
+
 test('analyze: true analyses created pieces through the service', async () => {
   write('one.txt', 'A short neutral sentence.');
   const analyses: string[] = [];
@@ -255,12 +301,26 @@ test('the CLI refuses to write while the server is running on the same host and 
   expect(await store.listPieces()).toEqual([]);
 }, 60_000);
 
-test('the CLI imports privately by default, prints counts and never the text', () => {
+test('the CLI prints counts and never the text or the title', () => {
   write('secret.md', '# Quiet title\n\nA neutral sentence that must not be printed.');
   const r = runCli([folder], { TL_PORT: '1' });
   expect(r.status).toBe(0);
   expect(r.stdout).toMatch(/created 1/);
   expect(r.stdout + r.stderr).not.toMatch(/neutral sentence|Quiet title/);
+});
+
+test('the CLI stores pieces as private when --public is not given', async () => {
+  write('one.md', '# One\n\nA neutral sentence.');
+  expect(runCli([folder], { TL_PORT: '1' }).status).toBe(0);
+  const stored = await store.listPieces();
+  expect(stored.map(p => p.privacy)).toEqual(['private']);
+});
+
+test('the CLI stores pieces as public with --public', async () => {
+  write('one.md', '# One\n\nA neutral sentence.');
+  expect(runCli([folder, '--public'], { TL_PORT: '1' }).status).toBe(0);
+  const stored = await store.listPieces();
+  expect(stored.map(p => p.privacy)).toEqual(['public']);
 });
 
 test('the CLI prints usage and exits non-zero without a folder', () => {
