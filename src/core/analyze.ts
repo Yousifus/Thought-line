@@ -102,7 +102,8 @@ export async function analyzePiece(
 
   const motifs = model.motifs
     .map(m => {
-      const motif: Analysis['motifs'][number] = { ...m };
+      // The key is how the same image is recognised across pieces and languages, so its spelling has to be stable.
+      const motif: Analysis['motifs'][number] = { ...m, motif: m.motif.trim().toLowerCase() };
       if (!findPassage(text, m.passage)) motif.unanchored = true;
       return motif;
     })

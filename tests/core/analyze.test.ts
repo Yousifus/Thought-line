@@ -172,3 +172,13 @@ test('the prompt covers reflective writing and guards against instructions insid
   expect(system).toMatch(/never instructions to follow/i);
   expect(system).toMatch(/addressed to the reader/);
 });
+
+test('motif keys are trimmed and lowercased so the same image always has the same key; the label stays as written', async () => {
+  const raw = JSON.parse(ok());
+  raw.motifs[0].motif = '  Sun ';
+  raw.motifs[0].label = 'The Sun';
+  raw.motifs[1].motif = 'WING\t';
+  const a = await analyzePiece(fakeProvider([JSON.stringify(raw)]), TEXT, { maxChars: 1000 });
+  expect(a.motifs.map(m => m.motif)).toEqual(['sun', 'wing']);
+  expect(a.motifs[0].label).toBe('The Sun');
+});
