@@ -1,8 +1,9 @@
 // The app shell: token gate, then three columns (piece list, editor, Logic and Thought tabs). Holds the piece list and the current PieceView.
 // Selection and unsaved drafts live in App, above the token gate, so neither is lost by switching pieces or by a 401 at save time.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Piece, PieceSummary, PieceView, Privacy } from '../core';
+import type { Piece, PieceSummary, PieceView, Privacy, Range } from '../core';
 import { UNAUTHORIZED_EVENT, api, getToken, setToken } from './api';
+import { revealRange } from './editorSelection';
 import { ErrorNote, messageOf } from './components/ErrorNote';
 import { NewPiece } from './components/NewPiece';
 import type { NewDraft } from './components/NewPiece';
@@ -12,6 +13,8 @@ import { Tabs } from './components/Tabs';
 import { TokenGate } from './components/TokenGate';
 
 const REJECTED = 'The server did not accept that token. Enter it again.';
+// Task 12 computes real counts; until then no station shows a note badge.
+const NO_NOTES: Record<string, number> = {};
 const EMPTY_NEW: NewDraft = { title: '', text: '', privacy: 'private' satisfies Privacy };
 
 interface Session {
@@ -51,6 +54,8 @@ function Workspace({ session, update }: { session: Session; update: Update }) {
   const latestRead = useRef(0);
   // What is selected right now, readable from callbacks of an editor that has since unmounted.
   const selectedRef = useRef(selectedId);
+  // The editor's textarea, so a station on the Logic map can select its passage there.
+  const editorRef = useRef<HTMLTextAreaElement>(null);
 
   const refreshList = useCallback(async () => {
     try {
@@ -121,6 +126,10 @@ function Workspace({ session, update }: { session: Session; update: Update }) {
     if (selectedRef.current === id) void loadView(id);
   };
 
+  // What the editor shows: the unsaved draft if there is one, else the saved text.
+  const editorText = view ? (drafts[view.piece.id] ?? view.piece.text) : '';
+  const reveal = (range: Range) => { if (editorRef.current) revealRange(editorRef.current, range); };
+
   return (
     <div className="app">
       <header className="top">
@@ -143,6 +152,7 @@ function Workspace({ session, update }: { session: Session; update: Update }) {
               key={view.piece.id}
               piece={view.piece}
               draft={drafts[view.piece.id]}
+              textareaRef={editorRef}
               onDraftChange={text => setDraft(view.piece.id, text)}
               onSaved={saved}
               onAnalyzed={() => analysed(view.piece.id)}
@@ -153,7 +163,7 @@ function Workspace({ session, update }: { session: Session; update: Update }) {
             </p>
           )}
         </div>
-        <Tabs view={view} />
+        <Tabs view={view} noteCounts={NO_NOTES} editorText={editorText} onReveal={reveal} />
       </div>
     </div>
   );

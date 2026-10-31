@@ -1,12 +1,17 @@
-// The right column: the Logic and Thought tabs. Tasks 11 and 12 swap the pane components; nothing here needs to change.
+// The right column: the Logic and Thought tabs. Passes the view, note counts and the editor's current text through to the panes.
 import { useState } from 'react';
-import type { PieceView } from '../../core';
+import type { PieceView, Range } from '../../core';
 import { LogicPane } from './LogicPane';
 import { ThoughtPane } from './ThoughtPane';
 
 type Tab = 'logic' | 'thought';
 
-export function Tabs({ view }: { view: PieceView | null }) {
+export function Tabs({ view, noteCounts, editorText, onReveal }: {
+  view: PieceView | null;
+  noteCounts?: Record<string, number>;
+  editorText?: string;
+  onReveal?: (range: Range) => void;
+}) {
   const [tab, setTab] = useState<Tab>('logic');
   return (
     <section className="maps" aria-label="Maps">
@@ -17,7 +22,7 @@ export function Tabs({ view }: { view: PieceView | null }) {
           </button>
         ))}
       </div>
-      {tab === 'logic' ? <LogicPane view={view} /> : <ThoughtPane view={view} />}
+      {tab === 'logic' ? <LogicPane view={view} noteCounts={noteCounts} editorText={editorText} onReveal={onReveal} /> : <ThoughtPane view={view} />}
     </section>
   );
 }

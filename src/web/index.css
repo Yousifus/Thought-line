@@ -192,3 +192,41 @@ textarea { min-height: 22rem; resize: vertical; line-height: 1.6; }
 /* Unsaved mark and the badge row in the piece list */
 .meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .unsaved { font-size: 0.85rem; font-weight: 700; color: var(--line-orange); }
+
+/* Logic map: stations on lines. Every flag has a shape or a dash; colour only reinforces it. */
+.logic-map { padding-top: 0.75rem; }
+.map-scroll { overflow-x: auto; }
+.logic-svg { display: block; width: 100%; height: auto; margin-inline: auto; }
+.role-premise { --role: var(--line-blue); }
+.role-step { --role: var(--line-green); }
+.role-conclusion { --role: var(--line-orange); }
+
+.logic-svg .link { fill: none; stroke: var(--role, var(--ink-2)); stroke-linecap: round; stroke-linejoin: round; }
+.logic-svg .link.required { stroke-width: 5; }
+.logic-svg .link.optional { stroke-width: 2; }
+.logic-svg .link.into-jump { stroke: var(--line-red); stroke-dasharray: 9 7; }
+.logic-svg .link.optional.into-jump { stroke-dasharray: 6 5; }
+.logic-svg .arrow { fill: var(--ink); }
+
+.logic-svg .station { cursor: pointer; outline: none; }
+.logic-svg .hit { fill: transparent; stroke: transparent; stroke-width: 3; }
+.logic-svg .station:hover .hit { fill: var(--surface-2); }
+.logic-svg .station.selected .hit { stroke: var(--ink); }
+.logic-svg .station:focus-visible .hit { stroke: var(--line-blue); }
+.logic-svg .dot { fill: var(--role); stroke: var(--surface); stroke-width: 3; }
+.logic-svg .dot.hollow { fill: var(--surface); stroke: var(--role); stroke-width: 4; }
+.logic-svg .ring-outer { fill: var(--surface); stroke: var(--ink); stroke-width: 3; }
+.logic-svg .ring-unanchored { fill: none; stroke: var(--ink-2); stroke-width: 2.5; stroke-dasharray: 1.5 5; stroke-linecap: round; }
+.logic-svg .end-bar { stroke: var(--ink); stroke-width: 5; stroke-linecap: round; }
+.logic-svg .label { fill: var(--ink); font-size: 13px; font-weight: 600; }
+.logic-svg .badge text { font-size: 12px; font-weight: 700; }
+.logic-svg .badge-jump rect { fill: var(--line-red); }
+.logic-svg .badge-jump text { fill: var(--on-line); }
+.logic-svg .badge-notes rect { fill: var(--surface); stroke: var(--ink); stroke-width: 2; }
+.logic-svg .badge-notes text { fill: var(--ink); }
+
+.stale-note { margin-top: 0.75rem; padding: 0.5rem 0.75rem; border-left: 6px solid var(--line-orange); background: var(--surface-2); font-weight: 600; }
+.map-key { margin-top: 1rem; color: var(--ink-2); font-size: 0.9rem; }
+.map-key summary { cursor: pointer; font-weight: 700; color: var(--ink); }
+.map-key ul { margin: 0.5rem 0 0; padding-inline-start: 1.25rem; }
+.map-key li { margin-top: 0.25rem; }

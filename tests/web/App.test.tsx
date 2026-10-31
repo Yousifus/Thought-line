@@ -160,3 +160,63 @@ test('a failed read shows the error and not Loading', async () => {
   expect(alert.textContent).toContain('Piece not found');
   expect(screen.queryByText('Loading.')).toBeNull();
 });
+
+// An analysed piece: the Logic map's stations select their passage in the editor, unless the editor no longer shows the analysed text.
+const analysed = (): PieceView => {
+  const text = 'Tides follow the moon. Fishermen plan around the tides.';
+  const piece = mk('c', 'Gamma piece', text);
+  const analysis = {
+    stations: [
+      { id: 's1', claim: 'Tides follow the moon', passage: 'Tides follow the moon.', role: 'premise', expressed: 0.8, grounding: 'evidence' },
+      { id: 's2', claim: 'Fishermen plan around the tides', passage: 'Fishermen plan around the tides.', role: 'conclusion', expressed: 0.7, grounding: 'example' },
+    ],
+    links: [{ from: 's1', to: 's2', required: true }],
+    motifs: [],
+    language: 'en',
+    model: 'fake',
+    createdAt: stamp,
+  } as const;
+  return {
+    piece,
+    version: { id: 'v1', pieceId: 'c', savedAt: stamp, text, analysis: analysis as never },
+    structure: { interchanges: [], loops: [], deadEnds: [] },
+    jumps: [],
+    notes: [],
+  };
+};
+
+const addGamma = () => {
+  if (!summaries.some(p => p.id === 'c')) summaries.push({ id: 'c', title: 'Gamma piece', privacy: 'private', updatedAt: stamp, versionCount: 1 });
+};
+
+test('clicking a station on the Logic map selects its passage in the editor', async () => {
+  const view = analysed();
+  byId.c = view.piece;
+  addGamma();
+  (api.readPiece as ReturnType<typeof vi.fn>).mockImplementation(async id => (id === 'c' ? view : viewOf(byId[id]!)));
+  render(<App />);
+  await pick(/^Gamma piece/);
+  await screen.findByRole('heading', { name: 'Gamma piece' });
+
+  fireEvent.click(await screen.findByRole('button', { name: /^Fishermen plan around the tides/ }));
+  const box = textbox();
+  expect(box.value.slice(box.selectionStart, box.selectionEnd)).toBe('Fishermen plan around the tides.');
+  expect(document.activeElement).toBe(box);
+  expect(screen.queryByRole('status')).toBeNull();
+});
+
+test('with an unsaved draft the click selects nothing and says why', async () => {
+  const view = analysed();
+  byId.c = view.piece;
+  addGamma();
+  (api.readPiece as ReturnType<typeof vi.fn>).mockImplementation(async id => (id === 'c' ? view : viewOf(byId[id]!)));
+  render(<App />);
+  await pick(/^Gamma piece/);
+  await screen.findByRole('heading', { name: 'Gamma piece' });
+
+  fireEvent.change(textbox(), { target: { value: `${view.piece.text} A new sentence.` } });
+  const before = [textbox().selectionStart, textbox().selectionEnd];
+  fireEvent.click(await screen.findByRole('button', { name: /^Tides follow the moon/ }));
+  expect(screen.getByRole('status').textContent).toBe('The text changed since this map was made. Save and analyse to update it.');
+  expect([textbox().selectionStart, textbox().selectionEnd]).toEqual(before);
+});
