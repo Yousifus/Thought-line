@@ -1,0 +1,51 @@
+{
+  "stations": [
+    {
+      "id": "s1",
+      "claim": "The moon's pull on the sea raises the tide twice a day.",
+      "passage": "The moon pulls on the sea, and that pull lifts the tide twice a day.",
+      "role": "premise",
+      "expressed": 0.8,
+      "grounding": "evidence"
+    },
+    {
+      "id": "s2",
+      "claim": "The harbour fishermen already plan their work around the moon.",
+      "passage": "The fishermen in our harbour set their nets by the tide tables, so they already plan their work around the moon.",
+      "role": "step",
+      "expressed": 0.7,
+      "grounding": "example"
+    },
+    {
+      "id": "s3",
+      "claim": "The moon rules every living thing on earth.",
+      "passage": "The moon therefore rules every living thing on earth, our moods and our sleep included.",
+      "role": "conclusion",
+      "expressed": 0.97,
+      "grounding": "assertion"
+    },
+    {
+      "id": "s4",
+      "claim": "The sea may remember the storms that crossed it.",
+      "passage": "أظن أن البحر يتذكر العواصف التي مرت به",
+      "role": "premise",
+      "expressed": 0.3,
+      "grounding": "assertion"
+    }
+  ],
+  "links": [
+    { "from": "s1", "to": "s2", "required": true },
+    { "from": "s2", "to": "s3", "required": true }
+  ],
+  "motifs": [
+    { "motif": "moon", "label": "moon", "passage": "The moon pulls on the sea", "order": 0 },
+    { "motif": "sea", "label": "sea", "passage": "pulls on the sea", "order": 1 },
+    { "motif": "tide", "label": "tide", "passage": "lifts the tide", "order": 2 },
+    { "motif": "harbour", "label": "harbour", "passage": "The fishermen in our harbour", "order": 3 },
+    { "motif": "harbour", "label": "الميناء", "passage": "يهدأ الميناء", "order": 4 },
+    { "motif": "moon", "label": "القمر", "passage": "ويظهر القمر شاحبا", "order": 5 },
+    { "motif": "wave", "label": "الأمواج", "passage": "فوق الأمواج", "order": 6 },
+    { "motif": "sea", "label": "البحر", "passage": "أن البحر يتذكر", "order": 7 }
+  ],
+  "language": "mixed"
+}

@@ -8,3 +8,4 @@ export * from './provider';
 export * from './prompt';
 export * from './analyze';
 export * from './store';
+export * from './view';
