@@ -197,3 +197,36 @@ describe('LogicPane', () => {
     expect(screen.getByRole('tabpanel', { name: 'Logic' }).textContent).toContain('Choose or create a piece');
   });
 });
+
+describe('LogicMap selection (Task 11 review fixes)', () => {
+  test('the chosen station is marked with aria-current, not aria-pressed', () => {
+    render(<LogicMap view={viewOf(sample)} noteCounts={{}} onSelectRange={() => {}} />);
+    const s1 = station(/pull on the sea raises the tide/);
+    expect(s1.getAttribute('aria-current')).toBeNull();
+    fireEvent.click(s1);
+    expect(s1.getAttribute('aria-current')).toBe('true');
+    expect(s1.hasAttribute('aria-pressed')).toBe(false);
+    expect(station(/moon rules every living thing/).getAttribute('aria-current')).toBeNull();
+  });
+
+  test('the selection is cleared when another version is shown, since ids like s1 repeat across versions', () => {
+    const v1 = viewOf(sample);
+    const v2 = viewOf(sample);
+    v2.version = { ...v2.version!, id: 'v2' };
+    const { rerender } = render(<LogicMap view={v1} noteCounts={{}} onSelectRange={() => {}} />);
+    fireEvent.click(station(/pull on the sea raises the tide/));
+    expect(station(/pull on the sea raises the tide/).getAttribute('aria-current')).toBe('true');
+    rerender(<LogicMap view={v2} noteCounts={{}} onSelectRange={() => {}} />);
+    expect(station(/pull on the sea raises the tide/).getAttribute('aria-current')).toBeNull();
+  });
+
+  test('selected and focused look different without colour: a solid thick outline against a dashed one', () => {
+    const css = readFileSync('src/web/index.css', 'utf8');
+    const rule = (selector: string) => css.split('\n').find(l => l.startsWith(selector)) ?? '';
+    const selected = rule('.logic-svg .station.selected .hit');
+    const focused = rule('.logic-svg .station:focus-visible .hit');
+    expect(selected).toMatch(/stroke-width:\s*4/);
+    expect(selected).not.toMatch(/stroke-dasharray/);
+    expect(focused).toMatch(/stroke-dasharray:\s*\d/);
+  });
+});

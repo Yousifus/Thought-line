@@ -1,9 +1,10 @@
 // The app shell: token gate, then three columns (piece list, editor, Logic and Thought tabs). Holds the piece list and the current PieceView.
 // Selection and unsaved drafts live in App, above the token gate, so neither is lost by switching pieces or by a 401 at save time.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Piece, PieceSummary, PieceView, Privacy, Range } from '../core';
 import { UNAUTHORIZED_EVENT, api, getToken, setToken } from './api';
 import { revealRange } from './editorSelection';
+import { NO_NOTES, notesByStation } from './layout/notes';
 import { ErrorNote, messageOf } from './components/ErrorNote';
 import { NewPiece } from './components/NewPiece';
 import type { NewDraft } from './components/NewPiece';
@@ -13,8 +14,6 @@ import { Tabs } from './components/Tabs';
 import { TokenGate } from './components/TokenGate';
 
 const REJECTED = 'The server did not accept that token. Enter it again.';
-// Task 12 computes real counts; until then no station shows a note badge.
-const NO_NOTES: Record<string, number> = {};
 const EMPTY_NEW: NewDraft = { title: '', text: '', privacy: 'private' satisfies Privacy };
 
 interface Session {
@@ -129,6 +128,13 @@ function Workspace({ session, update }: { session: Session; update: Update }) {
   // What the editor shows: the unsaved draft if there is one, else the saved text.
   const editorText = view ? (drafts[view.piece.id] ?? view.piece.text) : '';
   const reveal = (range: Range) => { if (editorRef.current) revealRange(editorRef.current, range); };
+  // Notes sit on the stations their passages overlap, measured against the shown version's text, never the draft.
+  const noteCounts = useMemo(
+    () => (view?.version ? notesByStation(view.version.text, view.version.analysis.stations, view.notes) : NO_NOTES),
+    [view],
+  );
+  // A note was added in the editor: read the piece again so it shows in the margin and on its station.
+  const noteAdded = (id: string) => { if (selectedRef.current === id) void loadView(id); };
 
   return (
     <div className="app">
@@ -153,6 +159,8 @@ function Workspace({ session, update }: { session: Session; update: Update }) {
               piece={view.piece}
               draft={drafts[view.piece.id]}
               textareaRef={editorRef}
+              noteText={view.version?.text ?? view.piece.text}
+              onNoteAdded={() => noteAdded(view.piece.id)}
               onDraftChange={text => setDraft(view.piece.id, text)}
               onSaved={saved}
               onAnalyzed={() => analysed(view.piece.id)}
@@ -163,7 +171,7 @@ function Workspace({ session, update }: { session: Session; update: Update }) {
             </p>
           )}
         </div>
-        <Tabs view={view} noteCounts={NO_NOTES} editorText={editorText} onReveal={reveal} />
+        <Tabs view={view} noteCounts={noteCounts} editorText={editorText} onReveal={reveal} />
       </div>
     </div>
   );

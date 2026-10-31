@@ -211,8 +211,10 @@ textarea { min-height: 22rem; resize: vertical; line-height: 1.6; }
 .logic-svg .station { cursor: pointer; outline: none; }
 .logic-svg .hit { fill: transparent; stroke: transparent; stroke-width: 3; }
 .logic-svg .station:hover .hit { fill: var(--surface-2); }
-.logic-svg .station.selected .hit { stroke: var(--ink); }
-.logic-svg .station:focus-visible .hit { stroke: var(--line-blue); }
+/* Selected: a solid thick outline. Focused: a dashed one. Both: thick and dashed. The shapes differ, so neither depends on colour. */
+.logic-svg .station.selected .hit { stroke: var(--ink); stroke-width: 4; }
+.logic-svg .station:focus-visible .hit { stroke: var(--line-blue); stroke-dasharray: 7 4; }
+.logic-svg .station.selected:focus-visible .hit { stroke: var(--ink); }
 .logic-svg .dot { fill: var(--role); stroke: var(--surface); stroke-width: 3; }
 .logic-svg .dot.hollow { fill: var(--surface); stroke: var(--role); stroke-width: 4; }
 .logic-svg .ring-outer { fill: var(--surface); stroke: var(--ink); stroke-width: 3; }
@@ -230,3 +232,40 @@ textarea { min-height: 22rem; resize: vertical; line-height: 1.6; }
 .map-key summary { cursor: pointer; font-weight: 700; color: var(--ink); }
 .map-key ul { margin: 0.5rem 0 0; padding-inline-start: 1.25rem; }
 .map-key li { margin-top: 0.25rem; }
+
+/* Thought path: stops along one line; returns curve back over it. Same outline rules as the Logic map. */
+.thought-map { padding-top: 0.75rem; }
+.thought-svg { display: block; width: 100%; height: auto; margin-inline: auto; }
+.thought-svg .forward-line { stroke: var(--line-blue); stroke-width: 5; stroke-linecap: round; }
+.thought-svg .return-arc { fill: none; stroke: var(--line-orange); stroke-width: 3; stroke-dasharray: 9 6; stroke-linecap: round; }
+.thought-svg .arrow { fill: var(--ink); }
+.thought-svg .stop { cursor: pointer; outline: none; }
+.thought-svg .hit { fill: transparent; stroke: transparent; stroke-width: 3; }
+.thought-svg .stop:hover .hit { fill: var(--surface-2); }
+.thought-svg .stop.selected .hit { stroke: var(--ink); stroke-width: 4; }
+.thought-svg .stop:focus-visible .hit { stroke: var(--line-blue); stroke-dasharray: 7 4; }
+.thought-svg .stop.selected:focus-visible .hit { stroke: var(--ink); }
+.thought-svg .dot { fill: var(--line-blue); stroke: var(--surface); stroke-width: 3; }
+.thought-svg .ring-outer { fill: none; stroke: var(--ink); stroke-width: 3; }
+.thought-svg .ring-unanchored { fill: none; stroke: var(--ink-2); stroke-width: 2.5; stroke-dasharray: 1.5 5; stroke-linecap: round; }
+.thought-svg .end-bar { stroke: var(--ink); stroke-width: 5; stroke-linecap: round; }
+.thought-svg .node-label { fill: var(--ink); font-size: 13px; font-weight: 600; }
+.thought-svg .node-count { fill: var(--ink-2); font-size: 12px; font-weight: 700; }
+
+/* Add note, under the editor */
+.add-note { margin-top: 1rem; padding: 0.75rem; border: 2px solid var(--ink); border-radius: 6px; }
+.add-note-quote-label { margin: 0; font-weight: 700; }
+.add-note blockquote, .notes-margin blockquote { margin: 0.5rem 0; padding: 0.25rem 0.75rem; border-inline-start: 4px solid var(--rule); color: var(--ink-2); overflow-wrap: anywhere; }
+.add-note label { display: block; margin-top: 0.5rem; font-weight: 700; }
+.note-input { min-height: 5rem; }
+
+/* Notes margin, under the maps */
+.notes-margin { margin-top: 1.5rem; padding-top: 0.75rem; border-top: 2px solid var(--rule); }
+.notes-margin h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+.notes-margin ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; }
+.note { padding: 0.5rem 0.75rem; border: 2px solid var(--rule); border-radius: 6px; cursor: pointer; }
+.note.gone { cursor: default; border-style: dashed; }
+.note p { margin: 0; overflow-wrap: anywhere; }
+.note-body { margin-top: 0.25rem; }
+.note-show { margin-top: 0.25rem; padding: 0.15rem 0.6rem; background: var(--surface); border: 2px solid var(--ink); border-radius: 6px; font-weight: 700; }
+.note-gone { font-weight: 700; color: var(--ink-2); }

@@ -1,11 +1,10 @@
 // The Logic tab's pane: the claim map for the current version, plus the rule for selecting a passage in the editor.
 // A passage is selected only while the editor shows exactly the analysed text; otherwise a short note says why not.
-import { useState } from 'react';
 import type { PieceView, Range } from '../../core';
-import { STALE_NOTE, planSelection } from '../editorSelection';
+import { STALE_NOTE } from '../editorSelection';
+import { NO_NOTES } from '../layout/notes';
+import { useReveal } from '../useReveal';
 import { LogicMap } from './LogicMap';
-
-const NO_NOTES: Record<string, number> = {};
 
 export function LogicPane({ view, noteCounts = NO_NOTES, editorText, onReveal }: {
   view: PieceView | null;
@@ -17,8 +16,8 @@ export function LogicPane({ view, noteCounts = NO_NOTES, editorText, onReveal }:
   onReveal?: (range: Range) => void;
 }) {
   const version = view?.version ?? null;
-  // The version whose passage was last refused, so the note belongs to one analysis and goes away with it.
-  const [refusedFor, setRefusedFor] = useState<string | null>(null);
+  const shown = editorText ?? version?.text ?? '';
+  const { select, stale } = useReveal(version?.text ?? '', shown, onReveal, version?.id ?? '');
 
   if (!view || !version) {
     return (
@@ -27,15 +26,6 @@ export function LogicPane({ view, noteCounts = NO_NOTES, editorText, onReveal }:
       </div>
     );
   }
-
-  const shown = editorText ?? version.text;
-  const select = (range: Range | null) => {
-    const plan = planSelection(version.text, shown, range);
-    setRefusedFor(plan.kind === 'stale' ? version.id : null);
-    if (plan.kind === 'select') onReveal?.(plan.range);
-  };
-  // Derived, so the note disappears by itself once the editor shows the analysed text again.
-  const stale = refusedFor === version.id && shown !== version.text;
 
   return (
     <div className="pane" role="tabpanel" aria-label="Logic">

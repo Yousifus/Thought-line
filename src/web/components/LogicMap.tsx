@@ -32,7 +32,9 @@ export function LogicMap({ view, noteCounts, onSelectRange }: {
     () => (analysis ? layoutLogic(analysis, structure ?? deriveStructure(analysis), jumps, noteCounts) : null),
     [analysis, structure, jumps, noteCounts],
   );
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The selection belongs to one version: ids like s1 repeat across versions, so a new version starts with nothing selected.
+  const [selection, setSelection] = useState<{ versionId: string; stationId: string } | null>(null);
+  const selectedId = version && selection?.versionId === version.id ? selection.stationId : null;
   const markerId = useId();
 
   if (!version || !layout) return <p className="placeholder">Not analysed yet. Use Save and analyse.</p>;
@@ -40,7 +42,7 @@ export function LogicMap({ view, noteCounts, onSelectRange }: {
 
   const roleOf = new Map(layout.stations.map(s => [s.id, s.station.role]));
   const activate = (s: LaidOutStation) => {
-    setSelectedId(s.id);
+    setSelection({ versionId: version.id, stationId: s.id });
     onSelectRange(findPassage(version.text, s.station.passage));
   };
 
@@ -106,7 +108,7 @@ function Station({ s, selected, onActivate }: { s: LaidOutStation; selected: boo
       role="button"
       tabIndex={0}
       aria-label={ariaLabelOf(s)}
-      aria-pressed={selected}
+      aria-current={selected ? 'true' : undefined}
       onClick={onActivate}
       onKeyDown={onKeyDown}
     >

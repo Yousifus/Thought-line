@@ -91,3 +91,87 @@ test('the text box is read-only while saving and analysing', async () => {
   release();
   await waitFor(() => expect(box.readOnly).toBe(false));
 });
+
+describe('Add note', () => {
+  const saved = 'The sun gives. So we fly. The sun gives again.';
+  const savedPiece: Piece = { ...piece, text: saved };
+  const box = () => screen.getByRole('textbox', { name: /^text$/i }) as HTMLTextAreaElement;
+  const select = (start: number, end: number) => {
+    box().focus();
+    box().setSelectionRange(start, end);
+    fireEvent.mouseUp(box());
+  };
+  const renderEditor = (over: Partial<Parameters<typeof PieceEditor>[0]> = {}) =>
+    render(<PieceEditor piece={savedPiece} noteText={saved} onNoteAdded={() => {}} onSaved={() => {}} onAnalyzed={() => {}} {...over} />);
+
+  test('nothing is offered until text is selected', () => {
+    renderEditor();
+    expect(screen.queryByRole('button', { name: 'Add note' })).toBeNull();
+    select(4, 4);
+    expect(screen.queryByRole('button', { name: 'Add note' })).toBeNull();
+    select(0, 3);
+    expect(screen.getByRole('button', { name: 'Add note' })).toBeTruthy();
+  });
+
+  test('posts the quote with up to 32 characters of context, then reports back and clears the form', async () => {
+    const add = vi.spyOn(api, 'addNote').mockResolvedValue({} as never);
+    const onNoteAdded = vi.fn();
+    renderEditor({ onNoteAdded });
+    // The second "The sun gives": the context is what tells it from the first.
+    const start = saved.lastIndexOf('The sun gives');
+    select(start, start + 'The sun gives'.length);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: '  Echoes the opening.  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+
+    await waitFor(() => expect(onNoteAdded).toHaveBeenCalledTimes(1));
+    expect(add).toHaveBeenCalledWith('p1', {
+      body: 'Echoes the opening.',
+      quote: 'The sun gives',
+      prefix: saved.slice(Math.max(0, start - 32), start),
+      suffix: ' again.',
+    });
+    expect(add.mock.calls[0][1].prefix!.length).toBeLessThanOrEqual(32);
+    expect(screen.queryByRole('textbox', { name: 'Note' })).toBeNull();
+  });
+
+  test('a note needs a body: an empty one is refused with an alert and nothing is posted', () => {
+    const add = vi.spyOn(api, 'addNote').mockResolvedValue({} as never);
+    renderEditor();
+    select(0, 3);
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    expect(screen.getByRole('alert').textContent).toContain('needs some text');
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  test('an API error is shown in an alert and the note text is kept', async () => {
+    vi.spyOn(api, 'addNote').mockRejectedValue(new ApiError('That quote is not in the piece', 404));
+    const onNoteAdded = vi.fn();
+    renderEditor({ onNoteAdded });
+    select(0, 3);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'Keep me' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('That quote is not in the piece');
+    expect((screen.getByRole('textbox', { name: 'Note' }) as HTMLTextAreaElement).value).toBe('Keep me');
+    expect(onNoteAdded).not.toHaveBeenCalled();
+  });
+
+  test('when the editor shows a draft, it explains that notes attach to saved text instead of offering the form', () => {
+    renderEditor({ draft: `${saved} And more.` });
+    select(0, 3);
+    expect(screen.queryByRole('button', { name: 'Add note' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('Notes attach to saved text');
+  });
+
+  test('when the saved text is not the text that was analysed, the same explanation appears', () => {
+    renderEditor({ noteText: 'An earlier analysed text.' });
+    select(0, 3);
+    expect(screen.queryByRole('button', { name: 'Add note' })).toBeNull();
+    expect(screen.getByRole('status').textContent).toContain('Notes attach to saved text');
+  });
+
+  test('a selection of only spaces offers nothing', () => {
+    renderEditor();
+    select(14, 15);
+    expect(screen.queryByRole('button', { name: 'Add note' })).toBeNull();
+  });
+});

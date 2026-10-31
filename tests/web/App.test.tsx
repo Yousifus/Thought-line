@@ -220,3 +220,76 @@ test('with an unsaved draft the click selects nothing and says why', async () =>
   expect(screen.getByRole('status').textContent).toBe('The text changed since this map was made. Save and analyse to update it.');
   expect([textbox().selectionStart, textbox().selectionEnd]).toEqual(before);
 });
+
+// Notes and the Thought tab, end to end through the app.
+const withMotifsAndNote = (): PieceView => {
+  const view = analysed();
+  const text = view.piece.text;
+  const start = text.indexOf('plan around');
+  (view.version!.analysis as { motifs: unknown }).motifs = [
+    { motif: 'moon', label: 'moon', passage: 'follow the moon', order: 0 },
+    { motif: 'tide', label: 'tide', passage: 'around the tides', order: 1 },
+  ];
+  view.notes = [{
+    id: 'n1', pieceId: 'c', author: 'claude-test', body: 'Plans follow the water.', createdAt: stamp,
+    anchor: { quote: 'plan around', prefix: 'Fishermen ', suffix: ' the tides.', start },
+    range: { start, end: start + 'plan around'.length },
+  }];
+  return view;
+};
+const openGamma = async (view: PieceView) => {
+  byId.c = view.piece;
+  addGamma();
+  (api.readPiece as ReturnType<typeof vi.fn>).mockImplementation(async id => (id === 'c' ? view : viewOf(byId[id]!)));
+  render(<App />);
+  await pick(/^Gamma piece/);
+  await screen.findByRole('heading', { name: 'Gamma piece' });
+};
+
+test('a note badges the station it sits on and is listed in the margin with its author', async () => {
+  await openGamma(withMotifsAndNote());
+  expect(await screen.findByText('1 note')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^Fishermen plan around the tides.*1 note/ })).toBeTruthy();
+  expect(screen.getByRole('button', { name: /^Tides follow the moon/ }).getAttribute('aria-label')).not.toContain('note');
+  const margin = screen.getByRole('region', { name: 'Notes' });
+  expect(margin.textContent).toContain('claude-test');
+  expect(margin.textContent).toContain('Plans follow the water.');
+});
+
+test('clicking a note selects its passage in the editor', async () => {
+  await openGamma(withMotifsAndNote());
+  fireEvent.click(await screen.findByRole('button', { name: /Show .* in the text/ }));
+  const box = textbox();
+  expect(box.value.slice(box.selectionStart, box.selectionEnd)).toBe('plan around');
+});
+
+test('clicking an image on the Thought tab selects its first passage in the editor', async () => {
+  await openGamma(withMotifsAndNote());
+  fireEvent.click(screen.getByRole('tab', { name: 'Thought' }));
+  fireEvent.click(await screen.findByRole('button', { name: /^tide/ }));
+  const box = textbox();
+  expect(box.value.slice(box.selectionStart, box.selectionEnd)).toBe('around the tides');
+});
+
+test('adding a note from the editor posts it and reloads the piece', async () => {
+  const view = withMotifsAndNote();
+  await openGamma(view);
+  const add = vi.spyOn(api, 'addNote').mockResolvedValue({} as never);
+  const reads = (api.readPiece as ReturnType<typeof vi.fn>).mock.calls.length;
+  const box = textbox();
+  box.focus();
+  box.setSelectionRange(0, 'Tides follow the moon.'.length);
+  fireEvent.mouseUp(box);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Note' }), { target: { value: 'An opening.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+  await waitFor(() => expect((api.readPiece as ReturnType<typeof vi.fn>).mock.calls.length).toBe(reads + 1));
+  expect(add).toHaveBeenCalledWith('c', expect.objectContaining({ body: 'An opening.', quote: 'Tides follow the moon.' }));
+});
+
+test('with an unsaved draft, a click on a note says the text changed and selects nothing', async () => {
+  const view = withMotifsAndNote();
+  await openGamma(view);
+  fireEvent.change(textbox(), { target: { value: `${view.piece.text} More.` } });
+  fireEvent.click(await screen.findByRole('button', { name: /Show .* in the text/ }));
+  expect(screen.getByRole('status').textContent).toBe('The text changed since this map was made. Save and analyse to update it.');
+});
