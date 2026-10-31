@@ -7,7 +7,7 @@ import { loadConfig } from '../src/server/config';
 import type { Config } from '../src/server/config';
 import { extractText } from '../src/server/import';
 import { buildProviders } from '../src/server/providers';
-import { buildReview, summarize } from './eval-review';
+import { archivedReviewName, buildReview, summarize } from './eval-review';
 import type { EvalResult } from './eval-review';
 
 loadDotenv({ quiet: true });
@@ -62,8 +62,10 @@ async function readSamples(): Promise<Sample[]> {
 let config: Config;
 try {
   // The same checks as the server, so a model host outside the house is refused here too.
+  // The cloud settings are dropped: the eval never uses a cloud model, so half-set ones must not stop it.
+  const { TL_CLOUD_BASE_URL: _b, TL_CLOUD_MODEL: _m, TL_CLOUD_API_KEY: _k, ...env } = process.env;
   const model = process.env.TL_EVAL_MODELS?.split(',')[0]?.trim() || 'eval';
-  config = loadConfig({ ...process.env, TL_TOKEN: EVAL_ONLY_TOKEN, TL_LOCAL_MODEL: process.env.TL_LOCAL_MODEL?.trim() || model });
+  config = loadConfig({ ...env, TL_TOKEN: EVAL_ONLY_TOKEN, TL_LOCAL_MODEL: process.env.TL_LOCAL_MODEL?.trim() || model });
 } catch (err) {
   fail(err instanceof Error ? err.message : String(err));
 }
@@ -121,6 +123,13 @@ for (const model of models) {
 }
 
 const reviewPath = path.join(OUT_DIR, 'REVIEW.md');
+// An earlier REVIEW.md may hold ticks; never write over it.
+const exists = await fs.stat(reviewPath).then(() => true, () => false);
+if (exists) {
+  const archived = path.join(OUT_DIR, archivedReviewName(new Date()));
+  await fs.rename(reviewPath, archived);
+  console.log(`Moved the earlier review to ${archived}.`);
+}
 await fs.writeFile(reviewPath, buildReview(results, new Date().toISOString()), 'utf8');
 const failed = results.filter(r => !r.ok).length;
 console.log(`Wrote ${reviewPath} (${results.length - failed} ok, ${failed} failed).`);

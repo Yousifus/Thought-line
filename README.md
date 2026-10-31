@@ -11,7 +11,7 @@ Status: this is the first working version. The interface is being redesigned, an
 ## Requirements
 
 - Node 22 or newer.
-- A local model behind an OpenAI-compatible server that supports structured output (`response_format` with a JSON schema). LM Studio and llama.cpp both do. A model that handles your writing language well matters more than size; see "Model" below.
+- A local model behind an OpenAI-compatible server that supports structured output (`response_format` with a JSON schema). LM Studio and llama.cpp both do. Pick one that reads your writing language well; see "Model" below.
 - Optional: Tailscale, to reach the tool from your other machines.
 
 ## Install
@@ -82,12 +82,12 @@ claude mcp add --transport http thought-line http://<tailscale-ip>:4390/mcp --he
 For clients that only speak stdio, bridge with `mcp-remote`:
 
 ```
-npx mcp-remote http://<host>:4390/mcp --header "Authorization: Bearer ${TL_TOKEN}"
+npx mcp-remote http://<host>:4390/mcp --allow-http --header "Authorization:${TL_AUTH}"
 ```
 
-with `TL_TOKEN` set in that client's environment.
+with `TL_AUTH` set to `Bearer <token>` in that client's environment. (The header is written without a space and the value comes from the environment because some clients mangle spaces in arguments.) `--allow-http` is needed because `mcp-remote` refuses plain `http://` to any host except localhost; use it only on a trusted private network such as your tailnet.
 
-A long analysis returns only when it has finished, and one analysis runs at a time. A client with a short request timeout may give up before the answer arrives; the server does not cancel the analysis when a client gives up, so read the result with `read_piece` afterwards.
+A long analysis returns only when it has finished, and one analysis runs at a time. A client with a short request timeout may give up before the answer arrives. The server does not cancel the analysis when a client gives up. After a timeout on `analyze_piece`, read the result with `read_piece`. After a timeout on `analyze_text`, find the new piece with `list_pieces`; its analysis still completes on the server and also appears in the browser.
 
 The five tools:
 

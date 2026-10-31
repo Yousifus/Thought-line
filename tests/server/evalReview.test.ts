@@ -1,7 +1,7 @@
 // Tests for the eval script's pure part: counts from an analysis, and the REVIEW.md marking sheet.
 import fs from 'node:fs';
 import path from 'node:path';
-import { buildReview, summarize } from '../../scripts/eval-review';
+import { archivedReviewName, buildReview, cleanError, summarize } from '../../scripts/eval-review';
 import type { EvalResult } from '../../scripts/eval-review';
 import type { Analysis } from '../../src/core';
 
@@ -66,5 +66,26 @@ describe('buildReview', () => {
 
   test('contains no em-dash', () => {
     expect(text).not.toContain(String.fromCharCode(0x2014));
+  });
+});
+
+describe('failure text', () => {
+  test('is collapsed to one line with no leading #', () => {
+    expect(cleanError('# Heading\nsecond   line\r\n\n## third')).toBe('Heading second line ## third');
+    const text = buildReview(
+      [{ ok: false, label: 'a', model: 'm', ms: 1000, error: '\n\n# Oops\nthe reply\n\n- [ ] Logic right?' }],
+      '2026-10-31T12:00:00.000Z',
+    );
+    expect(text).toContain('- Failed after 1.0 s: Oops the reply - [ ] Logic right?');
+    expect(text.match(/^#/gm)).toHaveLength(3); // the title, the sample and the model heading only
+    expect(text.match(/^- \[ \]/gm)).toBeNull();
+  });
+});
+
+describe('archivedReviewName', () => {
+  test('is a safe file name built from the time', () => {
+    const name = archivedReviewName(new Date('2026-10-31T02:45:17.270Z'));
+    expect(name).toBe('REVIEW.2026-10-31T02-45-17Z.md');
+    expect(name).not.toMatch(/[:\/]/);
   });
 });

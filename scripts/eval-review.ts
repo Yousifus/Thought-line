@@ -29,6 +29,16 @@ export function summarize(analysis: Analysis): Summary {
 
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 
+/** One line of plain text: whitespace collapsed, and no leading '#' so an error can never turn into a heading in REVIEW.md. */
+export function cleanError(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().replace(/^[#\s]+/, '');
+}
+
+/** The name an earlier REVIEW.md is moved to before a new one is written, e.g. REVIEW.2026-10-31T02-45-17Z.md (no characters Windows rejects). */
+export function archivedReviewName(now: Date): string {
+  return `REVIEW.${now.toISOString().replace(/\.\d+Z$/, 'Z').replace(/:/g, '-')}.md`;
+}
+
 /**
  * The marking sheet. One section per sample, one block per model with its counts, then the two boxes Yousef ticks.
  * Samples and models appear in the order they first occur in `results`. A failed run lists the reason and no boxes.
@@ -49,7 +59,7 @@ export function buildReview(results: EvalResult[], generatedAt: string): string 
     for (const r of results.filter(x => x.label === label)) {
       lines.push('', `### ${r.model}`, '');
       if (!r.ok) {
-        lines.push(`- Failed after ${seconds(r.ms)}: ${r.error}`);
+        lines.push(`- Failed after ${seconds(r.ms)}: ${cleanError(r.error)}`);
         continue;
       }
       const s = r.summary;
