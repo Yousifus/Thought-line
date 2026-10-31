@@ -86,11 +86,13 @@ export function createService(deps: ServiceDeps): Service {
       return piece;
     }),
 
-    async analyze(pieceId) {
-      await requirePiece(pieceId);
+    // Takes its place in the queue synchronously, so analyses run in the order they were requested. Checking that
+    // the piece exists first (an async disk read of uneven length) would let a later call overtake an earlier one.
+    analyze(pieceId) {
       return queue(async () => {
         // Read inside the job, after any edit already in flight: a queued analysis covers the text and privacy
-        // as they are when it actually runs, and the provider is chosen from that same read.
+        // as they are when it actually runs, and the provider is chosen from that same read. An unknown piece is
+        // refused here, before any provider is called.
         const piece = await withPiece(pieceId, () => requirePiece(pieceId));
         const analysis = await analyzePiece(providerFor(piece.privacy, providers), piece.text, { maxChars });
         return store.addVersion(pieceId, piece.text, analysis);

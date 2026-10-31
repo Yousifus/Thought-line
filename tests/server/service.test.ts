@@ -195,6 +195,25 @@ test('a failed analysis does not block the next one in the queue', async () => {
   expect(await store.listVersions(p.id)).toHaveLength(1);
 });
 
+test('analyses run in the order they were requested, even when one piece read is slower than the other', async () => {
+  // The first read of the piece is slow, the rest are instant: if analyze() did anything slow before taking its
+  // place in the queue, the second call would overtake the first and take its scripted [error, ok] response.
+  let reads = 0;
+  const jittery: typeof store = {
+    ...store,
+    getPiece: async id => {
+      if (reads++ === 0) await new Promise(r => setTimeout(r, 40));
+      return store.getPiece(id);
+    },
+  };
+  const local = fakeProvider([new ProviderError('Model at http://127.0.0.1:1234/v1 unreachable: down'), ok()]);
+  const svc = createService({ store: jittery, providers: { local }, maxChars: 24000, queue: serialQueue() });
+  const p = await svc.createPiece({ title: 't', text: TEXT });
+  reads = 0;
+  const [a, b] = await Promise.allSettled([svc.analyze(p.id), svc.analyze(p.id)]);
+  expect([a.status, b.status]).toEqual(['rejected', 'fulfilled']);
+});
+
 test('analyze enforces maxChars', async () => {
   const svc = make({ local: fakeProvider([ok()]) }, 10);
   const p = await svc.createPiece({ title: 't', text: TEXT });
