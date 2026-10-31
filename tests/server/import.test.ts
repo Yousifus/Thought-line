@@ -171,6 +171,26 @@ test('html <pre> content is kept, with its line break and indentation', async ()
   expect(out?.text).toBe('Verse\n\nBefore.\n\n  first line & more\n    second line\n\nAfter.');
 });
 
+test('noscript content is not imported, with or without an article', async () => {
+  const withArticle = await extractText(write('n1.html', '<body><article><p>Real text.</p><noscript>Enable JS please</noscript></article></body>'));
+  expect(withArticle?.text).toBe('Real text.');
+  const gtm = '<body><noscript><iframe src="https://example.invalid/ns.html" height="0"></iframe></noscript><p>Body text.</p></body>';
+  const noArticle = await extractText(write('n2.html', gtm));
+  expect(noArticle?.text).toBe('Body text.');
+});
+
+test('html <pre><code> keeps its text and line break without tags, and <br> in <pre> is a line break', async () => {
+  const code = await extractText(write('code.html', '<body><p>Intro.</p><pre><code>  a &lt;b&gt;\n  b</code></pre></body>'));
+  expect(code?.text).toBe('Intro.\n\n  a <b>\n  b');
+  const br = await extractText(write('br.html', '<body><pre>one<br>two <b>bold</b><br/>three</pre></body>'));
+  expect(br?.text).toBe('one\ntwo bold\nthree');
+});
+
+test('html <pre> is protected from blank-line collapsing and keeps a leading indent', async () => {
+  const out = await extractText(write('stanza.html', '<body><pre>    indented first\n\n\n\n  after a gap</pre><p>Next.</p></body>'));
+  expect(out?.text).toBe('    indented first\n\n\n\n  after a gap\n\nNext.');
+});
+
 test('an unreadable subfolder is recorded and the rest is still imported', async () => {
   write('good/a.txt', 'Neutral words in a readable folder.');
   write('locked/b.txt', 'Neutral words in a folder that cannot be read.');

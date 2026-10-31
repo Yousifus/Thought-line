@@ -38,8 +38,17 @@ const BLOCKS = new Set([
 ]);
 const PRE_START = '\u0001';
 const PRE_END = '\u0002';
-const PRE_MARKS = /[\u0001\u0002]/g;
-const DROPPED = ['script', 'style', 'nav', 'header', 'footer'];
+const PRE_SLOT = '\u0003';
+const PRE_MARKS = /[\u0001\u0002\u0003]/g;
+const DROPPED = ['script', 'noscript', 'style', 'nav', 'header', 'footer'];
+
+/** The text inside a <pre>: whitespace as written, <br> as a line break, tags (<code>, <b>) contributing only their text. */
+function preText(node: HtmlNode): string {
+  if (node.nodeType === NodeType.TEXT_NODE) return node.text.replace(PRE_MARKS, '');
+  if (node.nodeType !== NodeType.ELEMENT_NODE) return '';
+  const el = node as HTMLElement;
+  return el.tagName === 'BR' ? '\n' : el.childNodes.map(preText).join('');
+}
 
 function htmlToText(node: HtmlNode): string {
   if (node.nodeType === NodeType.TEXT_NODE) return node.text.replace(PRE_MARKS, '').replace(/[ \t\r\n\f]+/g, ' ');
@@ -48,7 +57,7 @@ function htmlToText(node: HtmlNode): string {
   const tag = el.tagName ?? '';
   if (tag === 'BR') return '\n';
   // Verse and code keep their line breaks and indentation; the marks tell fromHtml to leave the inside alone.
-  if (tag === 'PRE') return `\n\n${PRE_START}${el.text.replace(PRE_MARKS, '').replace(/\r\n?/g, '\n')}${PRE_END}\n\n`;
+  if (tag === 'PRE') return `\n\n${PRE_START}${el.childNodes.map(preText).join('').replace(/\r\n?/g, '\n')}${PRE_END}\n\n`;
   const inner = el.childNodes.map(htmlToText).join('');
   return BLOCKS.has(tag) ? `\n\n${inner}\n\n` : inner;
 }
@@ -61,7 +70,8 @@ const insideChrome = (el: HTMLElement) => {
 };
 
 function fromHtml(raw: string, filePath: string): { title: string; text: string } {
-  const doc = parse(raw);
+  // <pre> is left out on purpose: it parses as a normal element, so its tags are not read back as text.
+  const doc = parse(raw, { blockTextElements: { script: false, noscript: false, style: false } });
   const article = doc.querySelector('article');
   const body = doc.querySelector('body');
   const content = article ?? body ?? doc;
@@ -75,11 +85,16 @@ function fromHtml(raw: string, filePath: string): { title: string; text: string 
   const title = h1 || pageTitle || fileTitle(filePath);
 
   for (const tag of DROPPED) for (const el of content.querySelectorAll(tag)) el.remove();
-  // Outside <pre> every line is trimmed; inside, only the line ends and the ends of the block are.
-  const text = htmlToText(content).split(/(\u0001[\s\S]*?\u0002)/).map((part, i) => i % 2 === 1
-    ? part.slice(1, -1).split('\n').map(line => line.trimEnd()).join('\n').replace(/^\n+|\s+$/g, '')
-    : part.split('\n').map(line => line.trim()).join('\n')).join('');
-  return { title, text: tidy(text) };
+  // Each <pre> is lifted out into a slot, so the trimming and blank-line collapsing below cannot touch its inside.
+  // Inside a <pre> only line ends and the block's outer blank lines are trimmed; indentation stays.
+  const pres: string[] = [];
+  const marked = htmlToText(content).replace(/\u0001([\s\S]*?)\u0002/g, (_, body: string) => {
+    pres.push(body.split('\n').map(line => line.trimEnd()).join('\n').replace(/^\n+|\s+$/g, ''));
+    return `${PRE_SLOT}${pres.length - 1}${PRE_SLOT}`;
+  });
+  const text = tidy(marked.split('\n').map(line => line.trim()).join('\n'))
+    .replace(/\u0003(\d+)\u0003/g, (_, n: string) => pres[Number(n)]);
+  return { title, text };
 }
 
 function fromMarkdown(raw: string, filePath: string): { title: string; text: string } {
@@ -127,7 +142,6 @@ async function walk(dir: string, failed: ImportResult['failed']): Promise<string
   }
   return found;
 }
-
 
 /**
  * Imports every supported file under `folder`. A file's source path is its real path on disk (`realpath` gives the
