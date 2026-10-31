@@ -37,6 +37,17 @@ export function App() {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
+  // Drafts live only in memory (never in browser storage: it is private writing), so a reload or a closed tab would lose
+  // them. While any draft holds text that is not saved, the browser is asked to confirm before the page goes away.
+  // `drafts` has an entry only while it differs from the saved text; the new-piece form counts once it has anything in it.
+  const unsaved = Object.keys(session.drafts).length > 0 || session.newDraft.title !== '' || session.newDraft.text !== '';
+  useEffect(() => {
+    if (!unsaved) return;
+    const guard = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [unsaved]);
+
   if (!token) {
     return <TokenGate message={gateMessage} onToken={t => { setToken(t); setGateMessage(null); setTokenState(t); }} />;
   }

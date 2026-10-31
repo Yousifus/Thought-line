@@ -293,3 +293,77 @@ test('with an unsaved draft, a click on a note says the text changed and selects
   fireEvent.click(await screen.findByRole('button', { name: /Show .* in the text/ }));
   expect(screen.getByRole('status').textContent).toBe('The text changed since this map was made. Save and analyse to update it.');
 });
+
+describe('leaving the page with unsaved writing asks first', () => {
+  /** Fires beforeunload the way the browser does and reports whether a handler asked to stop the page closing. */
+  const leaveIsGuarded = () => {
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  test('no guard while everything is saved', async () => {
+    render(<App />);
+    expect(leaveIsGuarded()).toBe(false);
+    await pick(/^Alpha piece/);
+    await screen.findByRole('heading', { name: 'Alpha piece' });
+    expect(leaveIsGuarded()).toBe(false);
+  });
+
+  test('a guard while a piece has unsaved text, gone again when the text is back to the saved text', async () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    render(<App />);
+    await pick(/^Alpha piece/);
+    await screen.findByRole('heading', { name: 'Alpha piece' });
+
+    fireEvent.change(textbox(), { target: { value: 'Alpha, half rewritten' } });
+    expect(add.mock.calls.some(c => c[0] === 'beforeunload')).toBe(true);
+    expect(leaveIsGuarded()).toBe(true);
+
+    // The draft belongs to the piece, not to the screen: it still guards after switching away.
+    await pick(/^Beta piece/);
+    await screen.findByRole('heading', { name: 'Beta piece' });
+    expect(leaveIsGuarded()).toBe(true);
+
+    await pick(/^Alpha piece/);
+    await screen.findByRole('heading', { name: 'Alpha piece' });
+    fireEvent.change(textbox(), { target: { value: 'Alpha saved text.' } });
+    expect(leaveIsGuarded()).toBe(false);
+  });
+
+  test('a guard while the new-piece form has anything in it, gone when it is emptied', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'New piece' }));
+    expect(leaveIsGuarded()).toBe(false);
+    fireEvent.change(textbox(), { target: { value: 'Draft body' } });
+    expect(leaveIsGuarded()).toBe(true);
+    fireEvent.change(textbox(), { target: { value: '' } });
+    expect(leaveIsGuarded()).toBe(false);
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Draft title' } });
+    expect(leaveIsGuarded()).toBe(true);
+  });
+
+  test('the guard is removed when the app goes away', async () => {
+    const { unmount } = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'New piece' }));
+    fireEvent.change(textbox(), { target: { value: 'Draft body' } });
+    expect(leaveIsGuarded()).toBe(true);
+    unmount();
+    expect(leaveIsGuarded()).toBe(false);
+  });
+
+  test('drafts are never written to browser storage', async () => {
+    render(<App />);
+    await pick(/^Alpha piece/);
+    await screen.findByRole('heading', { name: 'Alpha piece' });
+    fireEvent.change(textbox(), { target: { value: 'Alpha, a private rewrite' } });
+    fireEvent.click(screen.getByRole('button', { name: 'New piece' }));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'A private title' } });
+    fireEvent.change(textbox(), { target: { value: 'A private body' } });
+    for (const store of [localStorage, sessionStorage]) {
+      for (let i = 0; i < store.length; i++) {
+        expect(store.getItem(store.key(i)!)).not.toMatch(/private|rewrite/);
+      }
+    }
+  });
+});
