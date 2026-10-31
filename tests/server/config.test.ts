@@ -1,7 +1,7 @@
 // Tests for loadConfig: required token, safe listen address, local-to-the-house model host, all-or-nothing cloud.
 import fs from 'node:fs';
 import path from 'node:path';
-import { isWildcardAddress, loadConfig } from '../../src/server/config';
+import { isWildcardAddress, loadConfig, repoDataDirIsNotIgnored } from '../../src/server/config';
 
 const base = { TL_TOKEN: 'x'.repeat(24), TL_LOCAL_MODEL: 'm' };
 
@@ -163,4 +163,77 @@ describe('TL_LOCAL_BASE_URL must point at a machine in the house', () => {
 test('isWildcardAddress recognises an all-interfaces bind and nothing else', () => {
   for (const a of ['0.0.0.0', '::', '::ffff:0.0.0.0']) expect(isWildcardAddress(a), a).toBe(true);
   for (const a of ['127.0.0.1', '::1', '100.101.102.103', '192.168.1.5', '']) expect(isWildcardAddress(a), a).toBe(false);
+});
+
+describe('TL_HOST: loopback and Tailscale only, anything else needs TL_ALLOW_BIND naming that exact address', () => {
+  const allowed = [
+    '127.0.0.1', '127.5.6.7', 'localhost', 'LOCALHOST', '::1', '[::1]',
+    '100.64.0.1', '100.101.102.103', '100.127.255.255',
+    'fd7a:115c:a1e0::1', 'fd7a:115c:a1e0:ab12:4843:cd96:625b:1234', 'FD7A:115C:A1E0::5',
+  ];
+  test.each(allowed)('accepts %s by default', host => {
+    expect(loadConfig({ ...base, TL_HOST: host }).host).toBe(host);
+  });
+
+  const refused = [
+    '192.168.1.20', '10.0.0.5', '172.16.0.9', '8.8.8.8', '100.63.255.255', '100.128.0.1', '128.0.0.1',
+    'fd7a:115c:a1e1::1', 'fd7b:115c:a1e0::1', 'fe80::1', '2001:db8::1', '::ffff:192.168.1.5',
+    'example.com', 'box.tailnet.ts.net', '0127.0.0.1', '127.0.0.1.evil.com',
+  ];
+  test.each(refused)('refuses %s unless TL_ALLOW_BIND names it', host => {
+    expect(() => loadConfig({ ...base, TL_HOST: host })).toThrow(/TL_ALLOW_BIND/);
+    expect(loadConfig({ ...base, TL_HOST: host, TL_ALLOW_BIND: host }).host).toBe(host);
+  });
+
+  test('TL_ALLOW_BIND allows exactly that address, and an empty value allows nothing', () => {
+    const env = { ...base, TL_HOST: '192.168.1.20' };
+    expect(() => loadConfig({ ...env, TL_ALLOW_BIND: '192.168.1.21' })).toThrow(/TL_ALLOW_BIND/);
+    expect(() => loadConfig({ ...env, TL_ALLOW_BIND: '' })).toThrow(/TL_ALLOW_BIND/);
+    expect(() => loadConfig({ ...env, TL_ALLOW_BIND: '192.168.1' })).toThrow(/TL_ALLOW_BIND/);
+  });
+
+  test('TL_ALLOW_BIND never opens a wildcard', () => {
+    for (const w of ['0.0.0.0', '::', '[::]']) {
+      expect(() => loadConfig({ ...base, TL_HOST: w, TL_ALLOW_BIND: w })).toThrow(/all interfaces/);
+    }
+  });
+
+  test('the error says plainly why', () => {
+    expect(() => loadConfig({ ...base, TL_HOST: '192.168.1.20' })).toThrow(/loopback.*Tailscale|Tailscale.*loopback/);
+  });
+});
+
+describe('the cloud model must be reached over https', () => {
+  const cloud = { TL_CLOUD_MODEL: 'cm', TL_CLOUD_API_KEY: 'k' };
+  test('http is refused, whatever the host', () => {
+    for (const u of ['http://c.example.com/v1', 'http://127.0.0.1:9000/v1']) {
+      expect(() => loadConfig({ ...base, ...cloud, TL_CLOUD_BASE_URL: u }), u).toThrow(/TL_CLOUD_BASE_URL must use https/);
+    }
+  });
+  test('https passes', () => {
+    expect(loadConfig({ ...base, ...cloud, TL_CLOUD_BASE_URL: 'https://c.example.com/v1' }).cloud?.baseUrl).toBe('https://c.example.com/v1');
+  });
+  test('the error does not echo the key', () => {
+    try {
+      loadConfig({ ...base, TL_CLOUD_MODEL: 'cm', TL_CLOUD_API_KEY: 'sk-secret-999', TL_CLOUD_BASE_URL: 'http://c/v1' });
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect((e as Error).message).not.toContain('sk-secret-999');
+    }
+  });
+});
+
+describe('repoDataDirIsNotIgnored: a data folder inside the repo but outside data/ is not gitignored', () => {
+  const repo = path.resolve('/work/thought-line');
+  test.each([
+    ['notes', true], ['./notes/private', true], ['.', true], ['', true], ['src/data', true], ['dataset', true], ['data-old', true],
+    ['data', false], ['./data', false], ['data/2026', false],
+  ])('%s -> %s', (dir, expected) => {
+    expect(repoDataDirIsNotIgnored(path.resolve(repo, dir), repo)).toBe(expected);
+  });
+  test('a folder outside the repo is not flagged', () => {
+    expect(repoDataDirIsNotIgnored(path.resolve('/elsewhere/tl-data'), repo)).toBe(false);
+    expect(repoDataDirIsNotIgnored(path.resolve('/work/thought-line-private'), repo)).toBe(false);
+    expect(repoDataDirIsNotIgnored(path.resolve('/work'), repo)).toBe(false);
+  });
 });

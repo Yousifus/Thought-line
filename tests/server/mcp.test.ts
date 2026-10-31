@@ -81,7 +81,7 @@ describe('the tools over HTTP', () => {
     for (const word of ['exactly', 'author', 'Yousef']) expect(description).toContain(word);
   });
 
-  test('annotations: reads are read-only, writes are never destructive, and only the analyses reach outside', async () => {
+  test('annotations: reads are read-only, writes are never destructive, and only analyze_piece can reach outside', async () => {
     const client = await connect(await listen(realService([])));
     const { tools } = await client.listTools();
     const hints = Object.fromEntries(tools.map(t => [t.name, t.annotations]));
@@ -89,7 +89,8 @@ describe('the tools over HTTP', () => {
     expect(hints.read_piece).toMatchObject({ readOnlyHint: true, openWorldHint: false });
     expect(hints.add_note).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
     expect(hints.analyze_piece).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: true });
-    expect(hints.analyze_text).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: true });
+    // Agent drafts are always private, so analyze_text never reaches a remote provider.
+    expect(hints.analyze_text).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false });
   });
 
   test('analyze_text, add_note, read_piece: the note comes back with gone: false', async () => {
@@ -117,13 +118,30 @@ describe('the tools over HTTP', () => {
     expect(read.stations.find((s: { id: string }) => s.id === 's4').flags.deadEnd).toBe(true);
   });
 
-  test('analyze_text files the piece as an agent draft, private unless asked', async () => {
+  test('analyze_text files the piece as a private agent draft, and an agent cannot ask for public', async () => {
     const service = realService([ok(), ok()]);
     const client = await connect(await listen(service));
+    const { tools } = await client.listTools();
+    const tool = tools.find(t => t.name === 'analyze_text')!;
+    expect(Object.keys(tool.inputSchema.properties ?? {}).sort()).toEqual(['text', 'title']);
+    expect(tool.description).not.toMatch(/privacy/i);
+
     const a = (await call(client, 'analyze_text', { title: 'a', text: TEXT })).json();
+    // An old client that still sends privacy gets a private piece, never a public one.
     const b = (await call(client, 'analyze_text', { title: 'b', text: TEXT, privacy: 'public' })).json();
     expect((await service.readPiece(a.pieceId))!.piece).toMatchObject({ privacy: 'private', source: { kind: 'agent' } });
-    expect((await service.readPiece(b.pieceId))!.piece).toMatchObject({ privacy: 'public', source: { kind: 'agent' } });
+    expect((await service.readPiece(b.pieceId))!.piece).toMatchObject({ privacy: 'private', source: { kind: 'agent' } });
+  });
+
+  test('analyze_text never reaches a cloud provider, even if a cloud provider is configured', async () => {
+    const cloud = fakeProvider([ok()], 'cloud');
+    const service = createService({
+      store: fileStore(dir), providers: { local: fakeProvider([ok()]), cloud }, maxChars: 24000, queue: serialQueue(),
+    });
+    const client = await connect(await listen(service));
+    const made = await call(client, 'analyze_text', { title: 'c', text: TEXT, privacy: 'public' });
+    expect(made.isError).toBe(false);
+    expect(cloud.calls).toHaveLength(0);
   });
 
   test('list_pieces lists summaries, and analyze_piece gives a new version in the same shape', async () => {

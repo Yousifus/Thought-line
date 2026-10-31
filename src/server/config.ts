@@ -1,4 +1,6 @@
 // Reads and checks the server's settings from the environment, refusing anything unsafe before a socket is opened.
+import net from 'node:net';
+import path from 'node:path';
 export interface Config {
   host: string;
   port: number;
@@ -59,6 +61,40 @@ function isInTheHouse(hostname: string): boolean {
   return host.endsWith('.local');
 }
 
+/** The eight 16-bit groups of an IPv6 address, or null when it is not one (an embedded IPv4 tail counts as two groups). */
+function ipv6Groups(address: string): number[] | null {
+  if (!net.isIPv6(address)) return null;
+  let text = address.toLowerCase();
+  const tail = /(\d+\.\d+\.\d+\.\d+)$/.exec(text)?.[1];
+  if (tail) {
+    const [a, b, c, d] = tail.split('.').map(Number);
+    text = text.slice(0, -tail.length) + ((a << 8) | b).toString(16) + ':' + ((c << 8) | d).toString(16);
+  }
+  const [head, rest] = text.split('::');
+  const left = head === '' ? [] : head.split(':');
+  const right = rest === undefined || rest === '' ? [] : rest.split(':');
+  const fill = rest === undefined ? [] : Array<string>(8 - left.length - right.length).fill('0');
+  return [...left, ...fill, ...right].map(g => parseInt(g, 16));
+}
+
+/**
+ * Where the server may listen without being told otherwise: this machine (127.0.0.0/8, ::1, localhost) or the
+ * tailnet (100.64.0.0/10, and fd7a:115c:a1e0::/48 for Tailscale IPv6). Not the open LAN: the token and the
+ * private text travel over plain HTTP, so only a private overlay network is acceptable.
+ */
+function isLoopbackOrTailscale(host: string): boolean {
+  const bare = host.replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  if (bare === 'localhost') return true;
+  if (net.isIPv4(bare)) {
+    const [a, b] = bare.split('.').map(Number);
+    return a === 127 || (a === 100 && b >= 64 && b <= 127);
+  }
+  const groups = ipv6Groups(bare);
+  if (!groups) return false;
+  if (groups.slice(0, 7).every(g => g === 0) && groups[7] === 1) return true;
+  return groups[0] === 0xfd7a && groups[1] === 0x115c && groups[2] === 0xa1e0;
+}
+
 function parseUrl(raw: string, key: string): URL {
   let url: URL;
   try {
@@ -85,6 +121,13 @@ export function loadConfig(env: Env): Config {
   const host = env.TL_HOST === undefined ? '127.0.0.1' : env.TL_HOST.trim();
   if (ALL_INTERFACES.has(host.toLowerCase())) {
     throw new Error('Refusing to listen on all interfaces; set TL_HOST to the Tailscale address or 127.0.0.1');
+  }
+  // The token and the private text cross this socket in plain HTTP, so the default is loopback or the tailnet only.
+  if (!isLoopbackOrTailscale(host) && get(env, 'TL_ALLOW_BIND')?.toLowerCase() !== host.toLowerCase()) {
+    throw new Error(
+      `Refusing to listen on ${host}: it is not loopback or a Tailscale address, and this server speaks plain HTTP. ` +
+      'Set TL_HOST to 127.0.0.1 or your Tailscale address, or set TL_ALLOW_BIND to exactly that address to say so on purpose',
+    );
   }
 
   const port = positiveInt(env, 'TL_PORT', 4390, 65535);
@@ -119,9 +162,22 @@ export function loadConfig(env: Env): Config {
     local: { baseUrl: localBaseUrl, model: localModel ?? 'fixture' },
   };
   if (cloudBase && cloudModel && cloudKey) {
-    parseUrl(cloudBase, 'TL_CLOUD_BASE_URL');
+    // The API key goes in a header on every request, so it must not travel in the clear.
+    if (parseUrl(cloudBase, 'TL_CLOUD_BASE_URL').protocol !== 'https:') {
+      throw new Error('TL_CLOUD_BASE_URL must use https:// (the API key would otherwise travel in the clear)');
+    }
     config.cloud = { baseUrl: cloudBase, model: cloudModel, apiKey: cloudKey };
   }
   if (fixtureAnalysisPath) config.fixtureAnalysisPath = fixtureAnalysisPath;
   return config;
+}
+
+/**
+ * True when `dataDir` sits inside the repository checkout but not under its `data/` folder, the only place
+ * .gitignore covers. Both arguments are absolute. The repository is public, so main.ts warns on this.
+ */
+export function repoDataDirIsNotIgnored(dataDir: string, repoRoot: string): boolean {
+  const outside = (rel: string) => rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+  if (outside(path.relative(repoRoot, dataDir))) return false;
+  return outside(path.relative(path.join(repoRoot, 'data'), dataDir));
 }

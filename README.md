@@ -32,7 +32,8 @@ Copy `.env.example` to `.env` and edit it. `.env` is gitignored; never commit it
 | Variable | What it does |
 |---|---|
 | `TL_TOKEN` | Required. The bearer token every `/api` and `/mcp` request must carry. At least 24 characters, no spaces. The placeholder from `.env.example` is refused. Make one with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. |
-| `TL_HOST` | The address to listen on. Default `127.0.0.1`. Use your Tailscale address to reach it from other machines. The server refuses to start if this is `0.0.0.0`, `::` or anything else that binds every interface. |
+| `TL_HOST` | The address to listen on. Default `127.0.0.1`. Use your Tailscale address to reach it from other machines. Only loopback (`127.0.0.0/8`, `::1`, `localhost`) and Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) are accepted by default, because the server speaks plain HTTP and your token and writing cross it. The server refuses to start on `0.0.0.0`, `::` or anything else that binds every interface, and on any other address unless `TL_ALLOW_BIND` names it. |
+| `TL_ALLOW_BIND` | Normally empty. To listen on an address outside the list above (a LAN address, say), set this to exactly that address, the same text as `TL_HOST`. It opens that one address only and never a wildcard. Anyone on that network can then reach the login page, and the traffic is not encrypted. |
 | `TL_PORT` | Default `4390`. |
 | `TL_DATA_DIR` | Where pieces and analyses are stored, as plain files. Default `./data`. |
 | `TL_MAX_CHARS` | The longest piece the tool will analyse, in characters. Default `24000`. A longer piece is refused with a message rather than cut. |
@@ -68,8 +69,8 @@ npm run import -- "C:\path\to\writing" --analyze
 - **Stop the server first.** The importer refuses to run while the server is up, because only one process may write the data.
 - Pieces are **private by default**. Use `--public` for pieces that are already published, such as site posts; only public pieces can ever go to a cloud model.
 - Importing alone does not call any model. Add `--analyze` to analyse each piece as it is imported.
-- Importing the same folder again updates the text of pieces that changed but keeps their titles, and it **overwrites any edits you made to that text in the app**. Re-import only files you still edit on disk.
-- The command prints counts and the names of files that failed, never the writing itself.
+- Importing the same folder again updates the text of pieces whose file changed, and keeps their titles. It never overwrites an edit you made in the app: each imported piece remembers a fingerprint (a sha256 hash) of the text it was last imported with, and a piece is updated only while its text still matches that fingerprint. If the file changed on disk and you also edited the piece in the app, the piece is left exactly as it is and the run reports it as a conflict (`conflicts N`, with the file's path). If only the app changed, the file is not touched and the piece keeps your edit. Pieces imported before this check existed have no fingerprint, so a changed file is reported as a conflict for them too; a piece whose text already matches its file gets its fingerprint on the next run.
+- The command prints counts and the names of files that failed or conflicted, never the writing itself.
 
 ## Connect an agent
 
@@ -94,7 +95,7 @@ The five tools:
 - `list_pieces`: every piece, newest first, with its id, title, privacy and how many analysed versions it has.
 - `read_piece`: one piece with its text, stations, links, motifs and margin notes, flattened into one object.
 - `analyze_piece`: analyse the current text of an existing piece with the configured model and save a new version.
-- `analyze_text`: file a draft of the agent's own as a new piece (private unless said otherwise), analyse it and return the result.
+- `analyze_text`: file a draft of the agent's own as a new piece, analyse it and return the result. Agent drafts are always private: they are analysed by the local model only, and the tool has no privacy option.
 - `add_note`: leave a margin note on a quoted passage of a piece.
 
 ## Privacy

@@ -96,14 +96,12 @@ const tools = {
     openWorld: true,
   },
   analyze_text: {
-    description: 'Analyse a draft of your own: files it as a new piece from an agent (privacy defaults to private, which keeps it on the local model), analyses it, and returns the same shape as read_piece. Use it for your own drafts; to read what Yousef wrote, use list_pieces and read_piece.',
+    description: 'Analyse a draft of your own: files it as a new piece from an agent, analyses it on the local model only (agent drafts are always private and never leave this machine), and returns the same shape as read_piece. Use it for your own drafts; to read what Yousef wrote, use list_pieces and read_piece.',
     inputSchema: {
       title: z.string().refine(nonBlank, 'must not be empty').max(200),
       text: z.string().refine(nonBlank, 'must not be empty'),
-      privacy: z.enum(['private', 'public']).optional(),
     },
     readOnly: false,
-    openWorld: true,
   },
   add_note: {
     description: `Leave a margin note on a passage of a piece. ${QUOTE_ADVICE} If the quote is not in the piece you get an error, so quote a shorter stretch. Add prefix or suffix (the words just before or after) only when the quote appears more than once. author is your own name, for example claude-qalam or claude-echo. Notes are read by Yousef, so write the body for him: say what you noticed and why, plainly.`,
@@ -165,7 +163,7 @@ async function buildMcpServer(service: Service, maxChars: number): Promise<McpSe
       readOnlyHint: t.readOnly,
       // Only the tools that write say so: they add notes or versions and never remove or overwrite anything.
       ...(t.readOnly ? {} : { destructiveHint: false }),
-      // A public piece can be sent to a remote provider; everything else stays inside the library.
+      // Only analyze_piece can send a public piece to a remote provider; agent drafts are private, and everything else stays inside the library.
       openWorldHint: t.openWorld === true,
     },
   });
@@ -188,13 +186,13 @@ async function buildMcpServer(service: Service, maxChars: number): Promise<McpSe
       return toReading(view);
     }));
 
-  server.registerTool('analyze_text', { ...meta(tools.analyze_text), inputSchema: tools.analyze_text.inputSchema }, ({ title, text, privacy }) =>
+  server.registerTool('analyze_text', { ...meta(tools.analyze_text), inputSchema: tools.analyze_text.inputSchema }, ({ title, text }) =>
     run(async () => {
       // A text that cannot be analysed creates nothing, so retrying it adds no drafts to the library.
       if (text.length > maxChars) {
         throw new AnalysisError(`This piece is ${text.length} characters; the limit is ${maxChars}. Split it or raise TL_MAX_CHARS.`);
       }
-      const piece = await service.createPiece({ title, text, privacy: privacy ?? 'private', source: { kind: 'agent' } });
+      const piece = await service.createPiece({ title, text, privacy: 'private', source: { kind: 'agent' } });
       try {
         const version = await service.analyze(piece.id);
         const view = await service.readPiece(piece.id, version.id);

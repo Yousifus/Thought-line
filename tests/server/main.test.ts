@@ -34,6 +34,12 @@ test('main refuses to listen on all interfaces', () => {
   expect(r.stderr).toMatch(/Refusing to listen on all interfaces/);
 });
 
+test('main refuses a LAN listen address unless TL_ALLOW_BIND names it', () => {
+  const r = runMain({ TL_TOKEN: 'x'.repeat(24), TL_HOST: '192.168.1.20', TL_ALLOW_BIND: '' });
+  expect(r.status).not.toBe(0);
+  expect(r.stderr).toMatch(/Refusing to listen on 192\.168\.1\.20.*TL_ALLOW_BIND/);
+});
+
 test('main refuses a model host outside the house', () => {
   const r = runMain({ TL_TOKEN: 'x'.repeat(24), TL_LOCAL_BASE_URL: 'https://api.example.com/v1' });
   expect(r.status).not.toBe(0);
