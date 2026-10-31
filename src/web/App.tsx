@@ -1,19 +1,32 @@
 // The app shell: token gate, then three columns (piece list, editor, Logic and Thought tabs). Holds the piece list and the current PieceView.
+// Selection and unsaved drafts live in App, above the token gate, so neither is lost by switching pieces or by a 401 at save time.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Piece, PieceSummary, PieceView } from '../core';
+import type { Piece, PieceSummary, PieceView, Privacy } from '../core';
 import { UNAUTHORIZED_EVENT, api, getToken, setToken } from './api';
 import { ErrorNote, messageOf } from './components/ErrorNote';
 import { NewPiece } from './components/NewPiece';
+import type { NewDraft } from './components/NewPiece';
 import { PieceEditor } from './components/PieceEditor';
 import { PieceList } from './components/PieceList';
 import { Tabs } from './components/Tabs';
 import { TokenGate } from './components/TokenGate';
 
 const REJECTED = 'The server did not accept that token. Enter it again.';
+const EMPTY_NEW: NewDraft = { title: '', text: '', privacy: 'private' satisfies Privacy };
+
+interface Session {
+  selectedId: string | null;
+  creating: boolean;
+  /** Unsaved text per piece id; an entry exists only while it differs from the saved text. */
+  drafts: Record<string, string>;
+  newDraft: NewDraft;
+}
+type Update = (fn: (s: Session) => Session) => void;
 
 export function App() {
   const [token, setTokenState] = useState<string | null>(() => getToken());
   const [gateMessage, setGateMessage] = useState<string | null>(null);
+  const [session, setSession] = useState<Session>({ selectedId: null, creating: false, drafts: {}, newDraft: EMPTY_NEW });
 
   // Any 401 clears the stored token inside api.ts; this brings the page back to the gate.
   useEffect(() => {
@@ -25,17 +38,19 @@ export function App() {
   if (!token) {
     return <TokenGate message={gateMessage} onToken={t => { setToken(t); setGateMessage(null); setTokenState(t); }} />;
   }
-  return <Workspace />;
+  return <Workspace session={session} update={setSession} />;
 }
 
-function Workspace() {
+function Workspace({ session, update }: { session: Session; update: Update }) {
+  const { selectedId, creating, drafts, newDraft } = session;
   const [pieces, setPieces] = useState<PieceSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [view, setView] = useState<PieceView | null>(null);
+  const [viewFailed, setViewFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Only the latest read may set the view, so a slow response for an earlier piece cannot overwrite a newer choice.
   const latestRead = useRef(0);
+  // What is selected right now, readable from callbacks of an editor that has since unmounted.
+  const selectedRef = useRef(selectedId);
 
   const refreshList = useCallback(async () => {
     try {
@@ -49,43 +64,61 @@ function Workspace() {
     const seq = ++latestRead.current;
     try {
       const next = await api.readPiece(id);
-      if (seq === latestRead.current) setView(next);
+      if (seq === latestRead.current) { setView(next); setViewFailed(false); }
     } catch (err) {
-      if (seq === latestRead.current) setError(messageOf(err));
+      if (seq === latestRead.current) { setError(messageOf(err)); setViewFailed(true); }
     }
   }, []);
 
-  useEffect(() => { void refreshList(); }, [refreshList]);
+  // On first load, and again when the token gate brought this component back, show the piece that was selected.
+  useEffect(() => {
+    void refreshList();
+    if (selectedRef.current) void loadView(selectedRef.current);
+  }, [refreshList, loadView]);
 
   const select = (id: string) => {
+    selectedRef.current = id;
     setError(null);
-    setCreating(false);
-    setSelectedId(id);
+    setViewFailed(false);
     setView(null);
+    update(s => ({ ...s, selectedId: id, creating: false }));
     void loadView(id);
   };
 
   const startNew = () => {
-    setError(null);
-    setCreating(true);
-    setSelectedId(null);
-    setView(null);
+    selectedRef.current = null;
     latestRead.current++;
+    setError(null);
+    setViewFailed(false);
+    setView(null);
+    update(s => ({ ...s, selectedId: null, creating: true }));
   };
 
   const created = (piece: Piece) => {
+    update(s => ({ ...s, newDraft: EMPTY_NEW }));
     void refreshList();
     select(piece.id);
   };
 
+  const withDraft = (drafts: Record<string, string>, id: string, text: string | null) => {
+    const next = { ...drafts };
+    if (text === null) delete next[id]; else next[id] = text;
+    return next;
+  };
+
+  const setDraft = (id: string, text: string | null) => update(s => ({ ...s, drafts: withDraft(s.drafts, id, text) }));
+
   const saved = (piece: Piece) => {
     setView(v => (v && v.piece.id === piece.id ? { ...v, piece } : v));
+    update(s => (s.drafts[piece.id] === piece.text ? { ...s, drafts: withDraft(s.drafts, piece.id, null) } : s));
     void refreshList();
   };
 
-  const analysed = () => {
+  // An analysis can finish after another piece was selected (or New piece opened). Then only the list changes:
+  // reloading would replace the piece on screen with the one he left.
+  const analysed = (id: string) => {
     void refreshList();
-    if (selectedId) void loadView(selectedId);
+    if (selectedRef.current === id) void loadView(id);
   };
 
   return (
@@ -101,14 +134,23 @@ function Workspace() {
       </header>
       <ErrorNote message={error} />
       <div className="columns">
-        <PieceList pieces={pieces} selectedId={selectedId} onSelect={select} onNew={startNew} />
+        <PieceList pieces={pieces} selectedId={selectedId} unsavedIds={Object.keys(drafts)} onSelect={select} onNew={startNew} />
         <div className="centre">
           {creating ? (
-            <NewPiece onCreated={created} />
+            <NewPiece draft={newDraft} onDraftChange={d => update(s => ({ ...s, newDraft: d }))} onCreated={created} />
           ) : view ? (
-            <PieceEditor key={view.piece.id} piece={view.piece} onSaved={saved} onAnalyzed={analysed} />
+            <PieceEditor
+              key={view.piece.id}
+              piece={view.piece}
+              draft={drafts[view.piece.id]}
+              onDraftChange={text => setDraft(view.piece.id, text)}
+              onSaved={saved}
+              onAnalyzed={() => analysed(view.piece.id)}
+            />
           ) : (
-            <p className="placeholder">{selectedId ? 'Loading.' : 'Choose a piece, or start a new one.'}</p>
+            <p className="placeholder">
+              {!selectedId ? 'Choose a piece, or start a new one.' : viewFailed ? 'This piece could not be opened.' : 'Loading.'}
+            </p>
           )}
         </div>
         <Tabs view={view} />

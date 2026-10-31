@@ -188,3 +188,7 @@ textarea { min-height: 22rem; resize: vertical; line-height: 1.6; }
   .columns > * + * { border-left: 0; border-top: 1px solid var(--rule); }
   textarea { min-height: 14rem; }
 }
+
+/* Unsaved mark and the badge row in the piece list */
+.meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.unsaved { font-size: 0.85rem; font-weight: 700; color: var(--line-orange); }

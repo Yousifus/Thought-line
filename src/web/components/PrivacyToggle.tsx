@@ -1,7 +1,15 @@
-// A two-button toggle that shows whether a piece is Private (local model only) or Public.
+// A two-button toggle that shows whether a piece is Private (local model only) or Public. Going public asks first: it is the privacy boundary.
 import type { Privacy } from '../../core';
 
+export const CONFIRM_PUBLIC = 'Make this piece public? It may then be sent to a cloud model if one is configured.';
+
 export function PrivacyToggle({ value, onChange, disabled }: { value: Privacy; onChange: (p: Privacy) => void; disabled?: boolean }) {
+  const choose = (p: Privacy) => {
+    if (p === value) return;
+    if (p === 'public' && !window.confirm(CONFIRM_PUBLIC)) return;
+    onChange(p);
+  };
+
   return (
     <div className="privacy">
       <div className="segmented" role="group" aria-label="Privacy">
@@ -12,7 +20,7 @@ export function PrivacyToggle({ value, onChange, disabled }: { value: Privacy; o
             className={value === p ? `seg on ${p}` : 'seg'}
             aria-pressed={value === p}
             disabled={disabled}
-            onClick={() => { if (value !== p) onChange(p); }}
+            onClick={() => choose(p)}
           >
             {p === 'private' ? 'Private' : 'Public'}
           </button>

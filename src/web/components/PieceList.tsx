@@ -1,9 +1,11 @@
-// The left column: every piece as a stop on a line, with a privacy badge and a New piece button.
+// The left column: every piece as a stop on a line, with a privacy badge, an unsaved mark, and a New piece button.
 import type { PieceSummary } from '../../core';
 
-export function PieceList({ pieces, selectedId, onSelect, onNew }: {
+export function PieceList({ pieces, selectedId, unsavedIds = [], onSelect, onNew }: {
   pieces: PieceSummary[];
   selectedId: string | null;
+  /** Ids of pieces that have unsaved text waiting in a draft. */
+  unsavedIds?: string[];
   onSelect: (id: string) => void;
   onNew: () => void;
 }) {
@@ -21,7 +23,10 @@ export function PieceList({ pieces, selectedId, onSelect, onNew }: {
               onClick={() => onSelect(p.id)}
             >
               <span className="title" dir="auto">{p.title}</span>
-              <span className={`badge ${p.privacy}`}>{p.privacy === 'private' ? 'Private' : 'Public'}</span>
+              <span className="meta">
+                <span className={`badge ${p.privacy}`}>{p.privacy === 'private' ? 'Private' : 'Public'}</span>
+                {unsavedIds.includes(p.id) ? <span className="unsaved">Unsaved changes</span> : null}
+              </span>
             </button>
           </li>
         ))}
