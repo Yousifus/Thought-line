@@ -206,3 +206,68 @@ test('listPieces shows what was created', async () => {
   const p = await svc.createPiece({ title: 'one', text: TEXT });
   expect(await svc.listPieces()).toEqual([expect.objectContaining({ id: p.id, title: 'one', versionCount: 0 })]);
 });
+
+describe('edits at once do not undo each other', () => {
+  /** A store whose piece reads and writes are slow and jittery, so unserialised read-modify-write cycles interleave. */
+  function slowStore(): ReturnType<typeof fileStore> {
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+    return {
+      ...store,
+      getPiece: async id => { await sleep(15); return store.getPiece(id); },
+      putPiece: async piece => { await sleep(15); return store.putPiece(piece); },
+    };
+  }
+  const slow = () => createService({ store: slowStore(), providers: { local: fakeProvider([]) }, maxChars: 24000, queue: serialQueue() });
+
+  test('setPrivacy then updateText at once: ends private AND with the new text', async () => {
+    const svc = slow();
+    const p = await svc.createPiece({ title: 't', text: TEXT, privacy: 'public' });
+    await Promise.all([svc.setPrivacy(p.id, 'private'), svc.updateText(p.id, 'the new text')]);
+    const after = await store.getPiece(p.id);
+    expect([after!.privacy, after!.text]).toEqual(['private', 'the new text']);
+  });
+
+  test('updateText then setPrivacy at once: ends private AND with the new text', async () => {
+    const svc = slow();
+    const p = await svc.createPiece({ title: 't', text: TEXT, privacy: 'public' });
+    await Promise.all([svc.updateText(p.id, 'the new text'), svc.setPrivacy(p.id, 'private')]);
+    const after = await store.getPiece(p.id);
+    expect([after!.privacy, after!.text]).toEqual(['private', 'the new text']);
+  });
+
+  test('many edits at once keep the last of each field, in call order', async () => {
+    const svc = slow();
+    const p = await svc.createPiece({ title: 't', text: TEXT, privacy: 'public' });
+    await Promise.all([
+      svc.updateText(p.id, 'one'), svc.setPrivacy(p.id, 'private'), svc.updateText(p.id, 'two'), svc.setPrivacy(p.id, 'public'),
+      svc.updateText(p.id, 'three'), svc.setPrivacy(p.id, 'private'),
+    ]);
+    const after = await store.getPiece(p.id);
+    expect([after!.privacy, after!.text]).toEqual(['private', 'three']);
+  });
+
+  test('an analysis queued behind a switch to private is sent to the local model, not the cloud', async () => {
+    const local = fakeProvider([ok()], 'local'), cloud = fakeProvider([ok()], 'cloud');
+    const svc = createService({ store: slowStore(), providers: { local, cloud }, maxChars: 24000, queue: serialQueue() });
+    const p = await svc.createPiece({ title: 't', text: TEXT, privacy: 'public' });
+    await Promise.all([svc.setPrivacy(p.id, 'private'), svc.analyze(p.id)]);
+    expect([local.calls.length, cloud.calls.length]).toEqual([1, 0]);
+  });
+
+  test('edits to different pieces do not wait for each other', async () => {
+    const svc = slow();
+    const a = await svc.createPiece({ title: 'a', text: 'a' });
+    const b = await svc.createPiece({ title: 'b', text: 'b' });
+    await Promise.all([svc.updateText(a.id, 'a2'), svc.updateText(b.id, 'b2')]);
+    expect([(await store.getPiece(a.id))!.text, (await store.getPiece(b.id))!.text]).toEqual(['a2', 'b2']);
+  });
+
+  test('a failed edit does not block the next edit of that piece', async () => {
+    const svc = slow();
+    const p = await svc.createPiece({ title: 't', text: TEXT });
+    const bad = svc.updateText('nope', 'x');
+    const good = svc.updateText(p.id, 'fine');
+    await expect(bad).rejects.toBeInstanceOf(NotFoundError);
+    expect((await good).text).toBe('fine');
+  });
+});

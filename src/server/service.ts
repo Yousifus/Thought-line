@@ -41,6 +41,22 @@ export interface ServiceDeps {
 export function createService(deps: ServiceDeps): Service {
   const { store, providers, maxChars, queue } = deps;
 
+  /**
+   * One chain per piece: every read-modify-write of a piece's record runs after the previous one has finished, so
+   * each sees the latest state and changes only its own field. Without it, a privacy toggle and an autosave
+   * landing together could write each other's stale copy back (and turn a private piece public again).
+   */
+  const chains = new Map<string, Promise<unknown>>();
+  function withPiece<T>(pieceId: string, job: () => Promise<T>): Promise<T> {
+    const prev = chains.get(pieceId) ?? Promise.resolve();
+    const run = prev.then(job, job);
+    const tail = run.then(() => {}, () => {});
+    chains.set(pieceId, tail);
+    // Forget a finished chain so the map does not grow with every piece ever edited.
+    void tail.then(() => { if (chains.get(pieceId) === tail) chains.delete(pieceId); });
+    return run;
+  }
+
   async function requirePiece(pieceId: string): Promise<Piece> {
     const piece = await store.getPiece(pieceId);
     if (!piece) throw new NotFoundError('Piece not found');
@@ -58,23 +74,24 @@ export function createService(deps: ServiceDeps): Service {
       return piece;
     },
 
-    async updateText(pieceId, text) {
-      const piece = { ...(await requirePiece(pieceId)), text, updatedAt: new Date().toISOString() };
+    updateText: (pieceId, text) => withPiece(pieceId, async () => {
+      const piece: Piece = { ...(await requirePiece(pieceId)), text, updatedAt: new Date().toISOString() };
       await store.putPiece(piece);
       return piece;
-    },
+    }),
 
-    async setPrivacy(pieceId, privacy) {
-      const piece = { ...(await requirePiece(pieceId)), privacy, updatedAt: new Date().toISOString() };
+    setPrivacy: (pieceId, privacy) => withPiece(pieceId, async () => {
+      const piece: Piece = { ...(await requirePiece(pieceId)), privacy, updatedAt: new Date().toISOString() };
       await store.putPiece(piece);
       return piece;
-    },
+    }),
 
     async analyze(pieceId) {
       await requirePiece(pieceId);
       return queue(async () => {
-        // Read inside the job: a queued analysis covers the text and privacy as they are when it actually runs.
-        const piece = await requirePiece(pieceId);
+        // Read inside the job, after any edit already in flight: a queued analysis covers the text and privacy
+        // as they are when it actually runs, and the provider is chosen from that same read.
+        const piece = await withPiece(pieceId, () => requirePiece(pieceId));
         const analysis = await analyzePiece(providerFor(piece.privacy, providers), piece.text, { maxChars });
         return store.addVersion(pieceId, piece.text, analysis);
       });

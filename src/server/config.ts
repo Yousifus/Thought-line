@@ -13,6 +13,8 @@ export interface Config {
 type Env = Record<string, string | undefined>;
 
 const ALL_INTERFACES = new Set(['', '0', '0.0.0.0', '::', '[::]', '::0', '0:0:0:0:0:0:0:0']);
+/** The value `.env.example` ships with. It is public, so it is never a secret. */
+const PLACEHOLDER_TOKEN = 'replace-with-a-long-random-string';
 const NOT_IN_THE_HOUSE = 'TL_LOCAL_BASE_URL must point at a machine in the house (loopback, LAN or Tailscale)';
 
 /** An env value, with an empty string counting as unset (a copied .env.example has empty lines). */
@@ -20,6 +22,11 @@ const get = (env: Env, key: string): string | undefined => {
   const v = env[key];
   return v === undefined || v.trim() === '' ? undefined : v.trim();
 };
+
+/** True for an address a socket reports when it is bound to every interface (used by main.ts as a backstop). */
+export function isWildcardAddress(address: string): boolean {
+  return address === '0.0.0.0' || address === '::' || address === '::ffff:0.0.0.0';
+}
 
 function positiveInt(env: Env, key: string, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
   const raw = get(env, key);
@@ -36,7 +43,11 @@ function ipv4(host: string): [number, number, number, number] | null {
   return parts.every(p => p <= 255) ? (parts as [number, number, number, number]) : null;
 }
 
-/** Loopback, RFC1918, Tailscale CGNAT (100.64.0.0/10), `.local` and `.ts.net`. `hostname` is as `URL` reports it. */
+/**
+ * Loopback, RFC1918, Tailscale CGNAT (100.64.0.0/10) and `.local`. `hostname` is as `URL` reports it.
+ * Not `.ts.net`: that also covers public Tailscale Funnel hosts on other people's tailnets, so a MagicDNS name
+ * has to be named in TL_LOCAL_ALLOW_HOST.
+ */
 function isInTheHouse(hostname: string): boolean {
   const host = hostname.toLowerCase();
   if (host === 'localhost' || host === '[::1]') return true;
@@ -45,7 +56,7 @@ function isInTheHouse(hostname: string): boolean {
     const [a, b] = ip;
     return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
   }
-  return host.endsWith('.local') || host.endsWith('.ts.net');
+  return host.endsWith('.local');
 }
 
 function parseUrl(raw: string, key: string): URL {
@@ -56,12 +67,20 @@ function parseUrl(raw: string, key: string): URL {
     throw new Error(`${key} is not a valid URL`);
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`${key} must start with http:// or https://`);
+  // These would be copied into error messages that reach API responses.
+  if (url.username || url.password || url.search || raw.includes('?')) {
+    throw new Error(`${key} must not contain a username, password or query string`);
+  }
   return url;
 }
 
 export function loadConfig(env: Env): Config {
   const token = env.TL_TOKEN ?? '';
-  if (token.length < 24) throw new Error('TL_TOKEN must be set (24+ characters)');
+  if (token.trim().length < 24) throw new Error('TL_TOKEN must be set (24+ characters)');
+  if (token === PLACEHOLDER_TOKEN) {
+    throw new Error('TL_TOKEN is still the placeholder from .env.example; set your own long random token (24+ characters)');
+  }
+  if (/\s/.test(token)) throw new Error('TL_TOKEN must not contain whitespace');
 
   const host = env.TL_HOST === undefined ? '127.0.0.1' : env.TL_HOST.trim();
   if (ALL_INTERFACES.has(host.toLowerCase())) {

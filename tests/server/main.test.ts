@@ -21,6 +21,13 @@ test('main refuses to start without a long token', () => {
   expect(r.stderr).toMatch(/TL_TOKEN must be set \(24\+ characters\)/);
 });
 
+test('main refuses the placeholder token from .env.example, and prints no dotenv banner', () => {
+  const r = runMain({ TL_TOKEN: 'replace-with-a-long-random-string' });
+  expect(r.status).not.toBe(0);
+  expect(r.stderr).toMatch(/placeholder/);
+  expect(r.stdout + r.stderr).not.toMatch(/dotenv/i);
+});
+
 test('main refuses to listen on all interfaces', () => {
   const r = runMain({ TL_TOKEN: 'x'.repeat(24), TL_HOST: '0.0.0.0' });
   expect(r.status).not.toBe(0);
