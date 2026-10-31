@@ -7,7 +7,8 @@ export interface Piece {
   title: string;
   privacy: Privacy;
   text: string;
-  source?: { kind: 'paste' | 'import' | 'agent'; path?: string };
+  /** For an import, `importedHash` is the sha256 of the normalized text as last imported, so a re-import can tell whether the app has edited it since. */
+  source?: { kind: 'paste' | 'import' | 'agent'; path?: string; importedHash?: string };
   createdAt: string;
   updatedAt: string;
 }

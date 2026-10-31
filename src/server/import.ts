@@ -1,4 +1,5 @@
 // Folder import: reads .md, .txt, .html/.htm and .docx files into pieces, one source path per file so re-runs skip or update.
+import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
@@ -12,6 +13,8 @@ export interface ImportResult {
   created: number;
   updated: number;
   skipped: number;
+  /** Files that changed on disk while their piece was also edited in the app (or predates the import hash): left untouched. */
+  conflicts: Array<{ path: string }>;
   failed: Array<{ path: string; error: string }>;
 }
 
@@ -23,6 +26,7 @@ const SKIPPED_DIRS = new Set(['node_modules']);
 const MAX_ERROR_CHARS = 300;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
+const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
 const describe = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, MAX_ERROR_CHARS);
 const fileTitle = (filePath: string) => path.basename(filePath, path.extname(filePath));
 
@@ -146,7 +150,8 @@ async function walk(dir: string, failed: ImportResult['failed']): Promise<string
 /**
  * Imports every supported file under `folder`. A file's source path is its real path on disk (`realpath` gives the
  * on-disk casing on Windows), so the same file is found again however the folder is spelled. An unchanged file is
- * skipped; a changed one has its text updated (its privacy is left as it was). One bad file never stops the run.
+ * skipped; a changed one has its text updated (its privacy is left as it was) only if the app has not edited the piece since
+ * the last import; otherwise it is reported as a conflict and left alone. One bad file never stops the run.
  */
 export async function importFolder(
   deps: { service: Service; store: Store },
@@ -162,7 +167,7 @@ export async function importFolder(
     throw new Error(`Cannot read the folder ${folder}: ${describe(err)}`);
   }
 
-  const result: ImportResult = { created: 0, updated: 0, skipped: 0, failed: [] };
+  const result: ImportResult = { created: 0, updated: 0, skipped: 0, conflicts: [], failed: [] };
   for (const file of await walk(root, result.failed)) {
     let pieceId: string | undefined;
     let canonical = file;
@@ -173,17 +178,29 @@ export async function importFolder(
       if (!extracted) continue;
       if (extracted.text === '') throw new Error('No text found in the file');
 
+      const importedHash = sha256(extracted.text);
       const existing = await store.findPieceBySourcePath(canonical);
       if (!existing) {
         pieceId = (await service.createPiece({
-          title: extracted.title, text: extracted.text, privacy: opts.privacy, source: { kind: 'import', path: canonical },
+          title: extracted.title, text: extracted.text, privacy: opts.privacy, source: { kind: 'import', path: canonical, importedHash },
         })).id;
         result.created++;
-      } else if (existing.text !== extracted.text) {
-        pieceId = (await service.updateText(existing.id, extracted.text)).id;
+      } else if (existing.text === extracted.text) {
+        // Nothing to change. A piece from before hashes existed learns its hash here, so later runs can tell edits apart.
+        if (existing.source?.importedHash !== importedHash) {
+          await store.putPiece({ ...existing, source: { ...existing.source, kind: 'import', path: canonical, importedHash } });
+        }
+        result.skipped++;
+      } else if (existing.source?.importedHash === importedHash) {
+        // The file is the same as at the last import, so any difference is an edit made in the app: keep it.
+        result.skipped++;
+      } else if (existing.source?.importedHash === sha256(existing.text)) {
+        // The app has not touched the text since the last import, so the file is the only thing that moved.
+        pieceId = (await service.updateText(existing.id, extracted.text, { importedHash })).id;
         result.updated++;
       } else {
-        result.skipped++;
+        // Edited in the app and changed on disk (or imported before hashes existed): never overwrite, say so.
+        result.conflicts.push({ path: canonical });
       }
     } catch (err) {
       result.failed.push({ path: canonical, error: describe(err) });

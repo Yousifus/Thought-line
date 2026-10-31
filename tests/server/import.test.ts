@@ -63,7 +63,7 @@ test('imports md, html and txt, ignores png', async () => {
   seed();
   const svc = make();
   const result = await importFolder({ service: svc, store }, folder, { privacy: 'private' });
-  expect(result).toEqual({ created: 3, updated: 0, skipped: 0, failed: [] });
+  expect(result).toEqual({ created: 3, updated: 0, skipped: 0, conflicts: [], failed: [] });
 
   const pieces = await Promise.all((await svc.listPieces()).map(s => store.getPiece(s.id)));
   const html = pieces.find(p => p?.source?.path?.endsWith('index.html'))!;
@@ -88,7 +88,7 @@ test('a second run skips unchanged files', async () => {
   const svc = make();
   await importFolder({ service: svc, store }, folder, { privacy: 'private' });
   const again = await importFolder({ service: svc, store }, folder, { privacy: 'private' });
-  expect(again).toEqual({ created: 0, updated: 0, skipped: 3, failed: [] });
+  expect(again).toEqual({ created: 0, updated: 0, skipped: 3, conflicts: [], failed: [] });
   expect(await svc.listPieces()).toHaveLength(3);
 });
 
@@ -98,7 +98,7 @@ test('an edited file updates', async () => {
   await importFolder({ service: svc, store }, folder, { privacy: 'private' });
   write('plain.txt', 'Different plain words, now edited.\n');
   const again = await importFolder({ service: svc, store }, folder, { privacy: 'private' });
-  expect(again).toEqual({ created: 0, updated: 1, skipped: 2, failed: [] });
+  expect(again).toEqual({ created: 0, updated: 1, skipped: 2, conflicts: [], failed: [] });
   const piece = (await store.findPieceBySourcePath(fs.realpathSync(path.join(folder, 'plain.txt'))))!;
   expect(piece.text).toBe('Different plain words, now edited.');
 });
@@ -257,7 +257,7 @@ test('source paths are canonical: a relative spelling of the folder skips on the
   await importFolder({ service: svc, store }, folder, { privacy: 'private' });
   const relative = path.relative(process.cwd(), folder);
   const again = await importFolder({ service: svc, store }, relative, { privacy: 'private' });
-  expect(again).toEqual({ created: 0, updated: 0, skipped: 3, failed: [] });
+  expect(again).toEqual({ created: 0, updated: 0, skipped: 3, conflicts: [], failed: [] });
   expect(await svc.listPieces()).toHaveLength(3);
 });
 
@@ -268,7 +268,7 @@ test.runIf(process.platform === 'win32')('source paths are canonical: a differen
   const shouted = folder.toUpperCase();
   expect(shouted).not.toBe(folder);
   const again = await importFolder({ service: svc, store }, shouted, { privacy: 'private' });
-  expect(again).toEqual({ created: 0, updated: 0, skipped: 3, failed: [] });
+  expect(again).toEqual({ created: 0, updated: 0, skipped: 3, conflicts: [], failed: [] });
   expect(await svc.listPieces()).toHaveLength(3);
 });
 

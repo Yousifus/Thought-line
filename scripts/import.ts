@@ -48,7 +48,8 @@ const service = createService({
 try {
   const privacy = flags.has('--public') ? 'public' : 'private';
   const result = await importFolder({ service, store }, folders[0], { privacy, analyze });
-  console.log(`Imported as ${privacy}: created ${result.created}, updated ${result.updated}, skipped ${result.skipped}, failed ${result.failed.length}.`);
+  console.log(`Imported as ${privacy}: created ${result.created}, updated ${result.updated}, skipped ${result.skipped}, conflicts ${result.conflicts.length}, failed ${result.failed.length}.`);
+  for (const c of result.conflicts) console.error(`Conflict (edited in the app and on disk, left as it is): ${c.path}`);
   for (const f of result.failed) console.error(`Failed: ${f.path}: ${f.error}`);
   if (result.failed.length > 0) process.exitCode = 1;
 } catch (err) {

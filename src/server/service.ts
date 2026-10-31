@@ -20,7 +20,8 @@ export class NotFoundError extends Error {
 export interface Service {
   listPieces(): Promise<PieceSummary[]>;
   createPiece(input: { title: string; text: string; privacy?: Privacy; source?: Piece['source'] }): Promise<Piece>;
-  updateText(pieceId: string, text: string): Promise<Piece>;
+  /** `importedHash` is for the importer: it is written into the piece's import source together with the new text. */
+  updateText(pieceId: string, text: string, opts?: { importedHash?: string }): Promise<Piece>;
   setPrivacy(pieceId: string, privacy: Privacy): Promise<Piece>;
   /** Analyses the piece's text as it is when the job runs, saves a version. One analysis at a time. */
   analyze(pieceId: string): Promise<Version>;
@@ -37,6 +38,9 @@ export interface ServiceDeps {
   maxChars: number;
   queue: SerialQueue;
 }
+
+/** One spelling of a line end. A textarea reports offsets as if every line ended in a single LF, so notes and highlights only line up with text stored that way. */
+const lf = (text: string) => text.replace(/\r\n?/g, '\n');
 
 export function createService(deps: ServiceDeps): Service {
   const { store, providers, maxChars, queue } = deps;
@@ -68,14 +72,16 @@ export function createService(deps: ServiceDeps): Service {
 
     async createPiece({ title, text, privacy = 'private', source }) {
       const now = new Date().toISOString();
-      const piece: Piece = { id: randomUUID(), title, privacy, text, createdAt: now, updatedAt: now };
+      const piece: Piece = { id: randomUUID(), title, privacy, text: lf(text), createdAt: now, updatedAt: now };
       if (source) piece.source = source;
       await store.putPiece(piece);
       return piece;
     },
 
-    updateText: (pieceId, text) => withPiece(pieceId, async () => {
-      const piece: Piece = { ...(await requirePiece(pieceId)), text, updatedAt: new Date().toISOString() };
+    updateText: (pieceId, text, opts) => withPiece(pieceId, async () => {
+      const current = await requirePiece(pieceId);
+      const piece: Piece = { ...current, text: lf(text), updatedAt: new Date().toISOString() };
+      if (opts?.importedHash !== undefined && current.source) piece.source = { ...current.source, importedHash: opts.importedHash };
       await store.putPiece(piece);
       return piece;
     }),

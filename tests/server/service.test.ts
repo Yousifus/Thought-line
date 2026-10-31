@@ -290,3 +290,42 @@ describe('edits at once do not undo each other', () => {
     expect((await good).text).toBe('fine');
   });
 });
+
+describe('line endings are stored as LF, because a textarea counts offsets that way', () => {
+  const crlf = 'First line of a neutral note.\r\nSecond line, the one we quote.\r\n\r\nThird line.\rFourth line.';
+  const lf = 'First line of a neutral note.\nSecond line, the one we quote.\n\nThird line.\nFourth line.';
+
+  test('createPiece normalizes CRLF and lone CR', async () => {
+    const svc = make({ local: fakeProvider([]) });
+    const p = await svc.createPiece({ title: 't', text: crlf });
+    expect(p.text).toBe(lf);
+    expect((await store.getPiece(p.id))!.text).toBe(lf);
+  });
+
+  test('updateText normalizes CRLF and lone CR', async () => {
+    const svc = make({ local: fakeProvider([]) });
+    const p = await svc.createPiece({ title: 't', text: 'x' });
+    const updated = await svc.updateText(p.id, crlf);
+    expect(updated.text).toBe(lf);
+    expect((await store.getPiece(p.id))!.text).toBe(lf);
+  });
+
+  test('a note on a CRLF piece lands on the quoted words at the LF offset', async () => {
+    const svc = make({ local: fakeProvider([]) });
+    const p = await svc.createPiece({ title: 't', text: crlf });
+    const quote = 'the one we quote';
+    await svc.addNote({ pieceId: p.id, author: 'a', body: 'b', quote });
+    const view = (await svc.readPiece(p.id))!;
+    const range = view.notes[0].range!;
+    expect(range.start).toBe(lf.indexOf(quote));
+    expect(view.piece.text.slice(range.start, range.end)).toBe(quote);
+  });
+
+  test('analysis of a CRLF piece sees LF text, so its passages and highlights line up', async () => {
+    const svc = make({ local: fakeProvider([ok()]) });
+    const p = await svc.createPiece({ title: 't', text: TEXT.replace(/\n/g, '\r\n') });
+    const version = await svc.analyze(p.id);
+    expect(version.text).toBe(TEXT.replace(/\r\n?/g, '\n'));
+    expect(version.analysis.stations.filter(s => s.unanchored)).toEqual([]);
+  });
+});
