@@ -37,6 +37,12 @@ export interface Analysis {
   motifs: MotifMention[];
   language: 'ar' | 'en' | 'mixed';
   model: string;
+  /** Fingerprint of the prompt that produced this reading, recorded with `model`. Missing on versions saved before it existed. */
+  promptVersion?: string;
+  /** The temperature the reading was drawn at, so a version can say what produced it. Missing on versions saved before it existed. */
+  temperature?: number;
+  /** The analysis schema the reading was validated against. Missing on versions saved before it existed. */
+  schemaVersion?: string;
   createdAt: string;
 }
 
@@ -65,6 +71,9 @@ export const ModelAnalysisSchema = z.object({
 });
 
 export type ModelAnalysis = z.infer<typeof ModelAnalysisSchema>;
+
+/** Bumped when `ModelAnalysisSchema` changes in a way that changes what a stored reading means. */
+export const SCHEMA_VERSION = 'analysis/1';
 
 /** JSON Schema for the model's structured output (every property required, no extra properties). */
 export const modelAnalysisJsonSchema: object = z.toJSONSchema(ModelAnalysisSchema);

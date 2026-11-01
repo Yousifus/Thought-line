@@ -135,3 +135,19 @@ describe('wrapLabel', () => {
     expect(wrapLabel('أظن أن البحر يتذكر العواصف التي مرت به')).toEqual(['أظن أن البحر يتذكر', 'العواصف التي مرت', 'به']);
   });
 });
+
+test('each station and each line carries its support, the second certainty channel', () => {
+  const out = run(branching);
+  const by = Object.fromEntries(out.stations.map(s => [s.id, s]));
+  // Roots are supported by how they are grounded: s1 by evidence, s2 by an example, s4 by a bare assertion.
+  expect(by.s1.support).toBeCloseTo(0.8);
+  expect(by.s2.support).toBeCloseTo(0.6);
+  expect(by.s4.support).toBeCloseTo(0.4);
+  // s3 is backed by s1 (required), so it inherits s1's support rather than its own confident wording.
+  expect(by.s3.support).toBeCloseTo(0.8);
+  expect(by.s3.station.expressed).toBeCloseTo(0.97);
+  // A line carries the support of the claim it points at.
+  const into3 = out.links.filter(l => l.to === 's3');
+  expect(into3).toHaveLength(2);
+  for (const l of into3) expect(l.support).toBeCloseTo(0.8);
+});

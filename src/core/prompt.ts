@@ -1,4 +1,5 @@
 // The instructions given to the model for reading a piece of writing: stations, links and motifs.
+import { modelAnalysisJsonSchema } from './analysis';
 
 const SYSTEM = `You read a piece of writing, which may be in Arabic, English, or a mix of both, and report its structure as JSON. Describe what the text does. Do not judge whether it is right, and do not add ideas the text does not contain.
 
@@ -27,6 +28,22 @@ Return three things.
 Also report language: "ar" if the text is Arabic, "en" if it is English, "mixed" if it uses both.
 
 Every passage must be an exact copy of text that is in the piece. Answer with JSON that matches the schema and nothing else.`;
+
+/**
+ * A short stable fingerprint: the prompt together with the schema the answer must satisfy. Every saved analysis
+ * records it, so a reading from six months ago can say which instructions produced it. Editing SYSTEM, or changing
+ * the schema's shape, changes the hash and so changes the version; nothing to remember and nothing to bump by hand.
+ */
+function fingerprint(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+export const PROMPT_VERSION = `p-${fingerprint(SYSTEM + JSON.stringify(modelAnalysisJsonSchema))}`;
 
 export function buildAnalysisPrompt(text: string): { system: string; user: string } {
   return { system: SYSTEM, user: text };

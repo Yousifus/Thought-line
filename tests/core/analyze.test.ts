@@ -1,6 +1,8 @@
 // Tests for analyzePiece: input limits, one retry, and post-processing of the model's answer.
 import { analyzePiece, AnalysisError } from '../../src/core/analyze';
-import { buildAnalysisPrompt } from '../../src/core/prompt';
+import { modelAnalysisJsonSchema, SCHEMA_VERSION } from '../../src/core/analysis';
+import { PROMPT_VERSION, buildAnalysisPrompt } from '../../src/core/prompt';
+import { TEMPERATURE } from '../../src/core/provider';
 import { fakeProvider } from '../helpers/fakeProvider';
 
 const TEXT = 'The sun gives. So we fly.';
@@ -52,8 +54,9 @@ test('a provider error is not swallowed by the retry', async () => {
 });
 test('a paraphrased passage is kept and marked unanchored', async () => {
   const a = await analyzePiece(fakeProvider([ok({ stationPassage: 'the sun is generous' })]), TEXT, { maxChars: 1000 });
-  expect(a.stations[0].unanchored).toBe(true);
-  expect(a.stations[1].unanchored).toBeUndefined();
+  // The unanchored claim sorts last, so find each station by id rather than assuming the first is the first listed.
+  expect(a.stations.find(s => s.id === 's1')!.unanchored).toBe(true);
+  expect(a.stations.find(s => s.id === 's2')!.unanchored).toBeUndefined();
 });
 test('a motif whose passage is not in the text is kept and marked unanchored', async () => {
   const raw = JSON.parse(ok());
@@ -65,7 +68,7 @@ test('a motif whose passage is not in the text is kept and marked unanchored', a
 });
 test('an empty passage counts as unanchored', async () => {
   const a = await analyzePiece(fakeProvider([ok({ stationPassage: '' })]), TEXT, { maxChars: 1000 });
-  expect(a.stations[0].unanchored).toBe(true);
+  expect(a.stations.find(s => s.id === 's1')!.unanchored).toBe(true);
 });
 test('links to unknown stations and duplicate ids are dropped', async () => {
   const a = await analyzePiece(fakeProvider([ok({ extraLink: { from: 's1', to: 'ghost', required: true }, duplicateFirstStation: true })]), TEXT, { maxChars: 1000 });
@@ -181,4 +184,47 @@ test('motif keys are trimmed and lowercased so the same image always has the sam
   const a = await analyzePiece(fakeProvider([JSON.stringify(raw)]), TEXT, { maxChars: 1000 });
   expect(a.motifs.map(m => m.motif)).toEqual(['sun', 'wing']);
   expect(a.motifs[0].label).toBe('The Sun');
+});
+
+test('stations are ordered by where their passage appears, and a passage the model could not place goes last', async () => {
+  const raw = JSON.parse(ok());
+  // The model lists the claims back to front, and adds one it could not place in the text.
+  raw.stations = [
+    { id: 's3', claim: 'A claim with no words behind it', passage: 'nothing like this is here', role: 'step', expressed: 0.5, grounding: 'assertion' },
+    { id: 's2', claim: 'So we fly', passage: 'So we fly', role: 'conclusion', expressed: 0.6, grounding: 'example' },
+    { id: 's1', claim: 'The sun gives', passage: 'The sun gives', role: 'premise', expressed: 0.9, grounding: 'assertion' },
+  ];
+  raw.links = [{ from: 's1', to: 's2', required: true }];
+  raw.motifs = [
+    { motif: 'wing', label: 'fly', passage: 'we fly', order: 0 },
+    { motif: 'sun', label: 'sun', passage: 'The sun', order: 0 },
+  ];
+  const a = await analyzePiece(fakeProvider([JSON.stringify(raw)]), TEXT, { maxChars: 1000 });
+  expect(a.stations.map(s => s.id)).toEqual(['s1', 's2', 's3']);
+  expect(a.stations[2].unanchored).toBe(true);
+  // Equal motif orders cannot swap between two readings: the words that come first in the text come first in the list.
+  expect(a.motifs.map(m => m.motif)).toEqual(['sun', 'wing']);
+});
+
+test('every reading records the prompt version that produced it', async () => {
+  const a = await analyzePiece(fakeProvider([ok()]), TEXT, { maxChars: 1000 });
+  expect(a.promptVersion).toBe(PROMPT_VERSION);
+  expect(a.promptVersion).toMatch(/^p-[0-9a-f]{8}$/);
+});
+
+test('the prompt version is a fingerprint of the prompt and the schema together', () => {
+  expect(buildAnalysisPrompt('x').system).toContain('Return three things');
+  const text = buildAnalysisPrompt('x').system + JSON.stringify(modelAnalysisJsonSchema);
+  const h = (() => {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h.toString(16).padStart(8, '0');
+  })();
+  expect(PROMPT_VERSION).toBe(`p-${h}`);
+});
+
+test('every reading records the temperature and the schema it was validated against', async () => {
+  const a = await analyzePiece(fakeProvider([ok()]), TEXT, { maxChars: 1000 });
+  expect(a.temperature).toBe(TEMPERATURE);
+  expect(a.schemaVersion).toBe(SCHEMA_VERSION);
 });

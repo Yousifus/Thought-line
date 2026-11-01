@@ -35,6 +35,14 @@ export interface Reading {
   /** True when the piece has been edited since this version was analysed. */
   stale: boolean;
   language: 'ar' | 'en' | 'mixed' | null;
+  /** The model that produced this reading, as configured at the time. */
+  model: string | null;
+  /** Fingerprint of the prompt that produced it. Null on versions saved before the field existed. */
+  promptVersion: string | null;
+  /** The temperature the reading was drawn at. Null on versions saved before the field existed. */
+  temperature: number | null;
+  /** The analysis schema the reading was validated against. Null on versions saved before the field existed. */
+  schemaVersion: string | null;
   stations: ReadingStation[];
   links: Link[];
   motifs: MotifMention[];
@@ -57,6 +65,10 @@ export function toReading(view: PieceView): Reading {
     text: version ? version.text : piece.text,
     stale: version ? version.text !== piece.text : false,
     language: analysis?.language ?? null,
+    model: analysis?.model ?? null,
+    promptVersion: analysis?.promptVersion ?? null,
+    temperature: analysis?.temperature ?? null,
+    schemaVersion: analysis?.schemaVersion ?? null,
     stations: (analysis?.stations ?? []).map(s => ({
       id: s.id,
       claim: s.claim,
@@ -85,7 +97,7 @@ const tools = {
     readOnly: true,
   },
   read_piece: {
-    description: 'Read one piece: its text, its stations (claims, each with the passage it rests on, how sure it sounds, how well it is grounded, a jump value when it sounds surer than its support allows, and flags for interchange, deadEnd, inLoop and unanchored), the links between them, the motifs in order, and the margin notes left so far (notes are marked gone when their passage has since been edited away). Reads the latest analysed version unless versionId is given.',
+    description: 'Read one piece: its text, the model and prompt version that produced the reading, its stations (claims, each with the passage it rests on, how sure it sounds, how well it is grounded, a jump value when it sounds surer than its support allows, and flags for interchange, deadEnd, inLoop and unanchored), the links between them, the motifs in order, and the margin notes left so far (notes are marked gone when their passage has since been edited away). Reads the latest analysed version unless versionId is given.',
     inputSchema: { pieceId: id, versionId: id.optional() },
     readOnly: true,
   },

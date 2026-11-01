@@ -202,11 +202,11 @@ textarea { min-height: 22rem; resize: vertical; line-height: 1.6; }
 .role-conclusion { --role: var(--line-orange); }
 
 .logic-svg .link { fill: none; stroke: var(--role, var(--ink-2)); stroke-linecap: round; stroke-linejoin: round; }
-.logic-svg .link.required { stroke-width: 5; }
-.logic-svg .link.optional { stroke-width: 2; }
+/* Line weight is how well the target claim is supported (set inline); required and optional are told apart by the arrowhead. */
 .logic-svg .link.into-jump { stroke: var(--line-red); stroke-dasharray: 9 7; }
 .logic-svg .link.optional.into-jump { stroke-dasharray: 6 5; }
 .logic-svg .arrow { fill: var(--ink); }
+.logic-svg .arrow-open { fill: var(--surface); stroke: var(--ink); stroke-width: 2.5; }
 
 .logic-svg .station { cursor: pointer; outline: none; }
 .logic-svg .hit { fill: transparent; stroke: transparent; stroke-width: 3; }
@@ -228,6 +228,13 @@ textarea { min-height: 22rem; resize: vertical; line-height: 1.6; }
 .logic-svg .badge-notes text { fill: var(--ink); }
 
 .stale-note { margin-top: 0.75rem; padding: 0.5rem 0.75rem; border-left: 6px solid var(--line-orange); background: var(--surface-2); font-weight: 600; }
+/* The words under the map: a claim's passage, verbatim, or the honest note that it was not found there. */
+.station-quote { margin: 0.75rem 0 0; padding: 0.5rem 0.75rem; border-left: 5px solid var(--ink-2); background: var(--surface-2); }
+.station-quote blockquote { margin: 0; font-size: 1rem; font-style: italic; }
+.station-quote figcaption { margin-top: 0.35rem; font-size: 0.85rem; color: var(--ink-2); }
+.station-quote .quote-missing { color: var(--ink-2); }
+.station-quote.quote-hint { color: var(--ink-2); font-size: 0.9rem; border-left-style: dashed; }
+
 .map-key { margin-top: 1rem; color: var(--ink-2); font-size: 0.9rem; }
 .map-key summary { cursor: pointer; font-weight: 700; color: var(--ink); }
 .map-key ul { margin: 0.5rem 0 0; padding-inline-start: 1.25rem; }

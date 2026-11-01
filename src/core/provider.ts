@@ -27,6 +27,13 @@ export class ProviderError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
+/**
+ * The temperature every reading is drawn at. Not zero: reproducibility comes from a version keyed on the
+ * piece's text, not from a colder model, so any difference between two versions of one text is the author's
+ * edit by construction. The value is exported so what the app records is what it actually sent.
+ */
+export const TEMPERATURE = 0.2;
+
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -55,7 +62,7 @@ export function openAICompatible(opts: OpenAICompatibleOptions): ModelProvider {
       if (opts.apiKey) headers.Authorization = `Bearer ${opts.apiKey}`;
       const body = JSON.stringify({
         model: opts.model,
-        temperature: 0.2,
+        temperature: TEMPERATURE,
         messages: [
           { role: 'system', content: req.system },
           { role: 'user', content: req.user },

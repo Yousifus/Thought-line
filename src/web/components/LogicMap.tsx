@@ -2,7 +2,7 @@
 // dead ends, loops and passages the model could not find. Every flag has a shape or dash as well as a colour.
 import { useId, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { deriveStructure, findPassage, textDirection } from '../../core';
+import { deriveStructure, findPassage, readingKey, textDirection } from '../../core';
 import type { PieceView, Range } from '../../core';
 import { MARKER_TOP, NODE_H, NODE_W, layoutLogic, wrapLabel } from '../layout/logicLayout';
 import type { LaidOutLink, LaidOutStation } from '../layout/logicLayout';
@@ -32,17 +32,24 @@ export function LogicMap({ view, noteCounts, onSelectRange }: {
     () => (analysis ? layoutLogic(analysis, structure ?? deriveStructure(analysis), jumps, noteCounts) : null),
     [analysis, structure, jumps, noteCounts],
   );
-  // The selection belongs to one version: ids like s1 repeat across versions, so a new version starts with nothing selected.
-  const [selection, setSelection] = useState<{ versionId: string; stationId: string } | null>(null);
-  const selectedId = version && selection?.versionId === version.id ? selection.stationId : null;
-  const markerId = useId();
+  // The selection belongs to one reading, not to one version id: re-reading unchanged text keeps the id and replaces the
+  // map under it, so a station called s1 can mean a different claim afterwards. The reading key changes with the map.
+  const reading = version ? readingKey(version) : '';
+  const [selection, setSelection] = useState<{ reading: string; stationId: string } | null>(null);
+  const selectedId = version && selection?.reading === reading ? selection.stationId : null;
+  // Hovering or focusing a station shows its words without changing the selection; the selection keeps them there after the pointer leaves.
+  const [pointedId, setPointedId] = useState<string | null>(null);
+  const uid = useId().replace(/:/g, '');
+  const arrowFilled = `${uid}-arrow-filled`;
+  const arrowOpen = `${uid}-arrow-open`;
+  const quoteId = `${uid}-quote`;
 
   if (!version || !layout) return <p className="placeholder">Not analysed yet. Use Save and analyse.</p>;
   if (layout.stations.length === 0) return <p className="placeholder">The model found no claims in this piece.</p>;
 
   const roleOf = new Map(layout.stations.map(s => [s.id, s.station.role]));
   const activate = (s: LaidOutStation) => {
-    setSelection({ versionId: version.id, stationId: s.id });
+    setSelection({ reading, stationId: s.id });
     onSelectRange(findPassage(version.text, s.station.passage));
   };
 
@@ -57,8 +64,11 @@ export function LogicMap({ view, noteCounts, onSelectRange }: {
           aria-label={`Logic map: ${layout.stations.length} ${layout.stations.length === 1 ? 'claim' : 'claims'}`}
         >
           <defs>
-            <marker id={markerId} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <marker id={arrowFilled} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
               <path d="M1 1 L9 5 L1 9 z" className="arrow" />
+            </marker>
+            <marker id={arrowOpen} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+              <path d="M1 1 L9 5 L1 9 z" className="arrow-open" />
             </marker>
           </defs>
           <g>
@@ -67,28 +77,47 @@ export function LogicMap({ view, noteCounts, onSelectRange }: {
                 key={`${l.from}>${l.to}#${i}`}
                 className={linkClass(l, roleOf.get(l.from))}
                 d={linkPath(l)}
-                markerEnd={l.inLoop ? `url(#${markerId})` : undefined}
+                style={{ strokeWidth: linkWidth(l.support) }}
+                markerEnd={`url(#${l.required ? arrowFilled : arrowOpen})`}
               />
             ))}
           </g>
           <g>
             {layout.stations.map(s => (
-              <Station key={s.id} s={s} selected={selectedId === s.id} onActivate={() => activate(s)} />
+              <Station
+                key={s.id}
+                s={s}
+                selected={selectedId === s.id}
+                quoteId={quoteId}
+                onActivate={() => activate(s)}
+                onPoint={on => setPointedId(on ? s.id : (id => (id === s.id ? null : id)))}
+              />
             ))}
           </g>
         </svg>
       </div>
+      <QuoteStrip stations={layout.stations} id={quoteId} pointedId={pointedId} selectedId={selectedId} />
       <Key />
     </div>
   );
 }
 
-function Station({ s, selected, onActivate }: { s: LaidOutStation; selected: boolean; onActivate(): void }) {
+function Station({ s, selected, quoteId, onActivate, onPoint }: {
+  s: LaidOutStation;
+  selected: boolean;
+  /** The id of the strip under the map that shows this station's words. */
+  quoteId: string;
+  onActivate(): void;
+  /** True while the pointer or the keyboard is on this station, false when it leaves. */
+  onPoint(on: boolean): void;
+}) {
   const { station } = s;
   const dir = textDirection(station.claim);
   const lines = wrapLabel(station.claim);
   const unanchored = station.unanchored === true;
   const outer = s.isInterchange ? 15 : 9;
+  // How sure the writer sounds is carried by the station itself: a confident claim is a heavier marker, a hedged one a smaller.
+  const dotR = dotRadius(station.expressed);
   const bar = station.role === 'conclusion' ? -1 : 1; // the end bar sits on the side where the line stops
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onActivate(); }
@@ -111,6 +140,11 @@ function Station({ s, selected, onActivate }: { s: LaidOutStation; selected: boo
       aria-current={selected ? 'true' : undefined}
       onClick={onActivate}
       onKeyDown={onKeyDown}
+      onMouseEnter={() => onPoint(true)}
+      onMouseLeave={() => onPoint(false)}
+      onFocus={() => onPoint(true)}
+      onBlur={() => onPoint(false)}
+      aria-describedby={quoteId}
     >
       <title>{station.claim}</title>
       <rect className="hit" x={-NODE_W / 2} y={-MARKER_TOP} width={NODE_W} height={NODE_H} rx={10} />
@@ -118,7 +152,7 @@ function Station({ s, selected, onActivate }: { s: LaidOutStation; selected: boo
         <circle className="ring-unanchored" r={outer + 6}><title>{NOT_FOUND}</title></circle>
       ) : null}
       {s.isInterchange ? <circle className="ring-outer" r={15} /> : null}
-      <circle className={s.isDeadEnd ? 'dot hollow' : 'dot'} r={9} />
+      <circle className={s.isDeadEnd ? 'dot hollow' : 'dot'} r={dotR} />
       {s.isDeadEnd ? <line className="end-bar" x1={bar * (outer + 9)} x2={bar * (outer + 9)} y1={-13} y2={13} /> : null}
       {badges.map((b, i) => (
         <g key={b.kind} className={`badge badge-${b.kind}`} transform={`translate(${badgeX(i)} ${BADGE_Y})`}>
@@ -139,7 +173,7 @@ function Station({ s, selected, onActivate }: { s: LaidOutStation; selected: boo
 const ROLE_NAME = { premise: 'Premise', step: 'Step', conclusion: 'Conclusion' } as const;
 
 function ariaLabelOf(s: LaidOutStation): string {
-  const parts = [`${s.station.claim}.`, `${ROLE_NAME[s.station.role]}.`];
+  const parts = [`${s.station.claim}.`, `${ROLE_NAME[s.station.role]}.`, `Sounds ${s.station.expressed.toFixed(2)}, supported to ${s.support.toFixed(2)}.`];
   if (s.isInterchange) parts.push('Interchange.');
   if (s.jump) parts.push(`Stated more surely than its support allows, ${s.jump.excess.toFixed(2)} over.`);
   if (s.isDeadEnd) parts.push('Dead end.');
@@ -190,17 +224,61 @@ function arcPath(a: Pt, b: Pt): string {
   return `M${f(start.x)} ${f(start.y)} Q${f(ctrl.x)} ${f(ctrl.y)} ${f(end.x)} ${f(end.y)}`;
 }
 
+/** Marker weight for how sure the writer sounds: 0.0 is a small dot, 1.0 a heavy one. */
+export function dotRadius(expressed: number): number {
+  const v = Math.min(1, Math.max(0, expressed));
+  return 5 + 6 * v;
+}
+
+/** Line weight for how well the target claim is supported: 0.4 (bare assertion) is thin, 0.8 (evidence) is thick. */
+export function linkWidth(support: number): number {
+  const v = Math.min(1, Math.max(0, support));
+  return 1.5 + 4.5 * v;
+}
+
+/**
+ * The words a claim rests on. Pointing at a station, or clicking it, shows its passage verbatim; a claim whose passage the
+ * model could not find in the text says so instead of showing its paraphrase as if it were a quote.
+ */
+function QuoteStrip({ stations, id, pointedId, selectedId }: {
+  stations: LaidOutStation[];
+  id: string;
+  pointedId: string | null;
+  selectedId: string | null;
+}) {
+  const shown = stations.find(s => s.id === (pointedId ?? selectedId)) ?? null;
+  if (!shown) {
+    return (
+      <p className="station-quote quote-hint" id={id}>
+        Point at a claim, or select it, to see the words it rests on.
+      </p>
+    );
+  }
+  return (
+    <figure className="station-quote" id={id} aria-live="polite">
+      {shown.station.unanchored
+        ? <blockquote className="quote-missing">Inferred: not found in the text.</blockquote>
+        : <blockquote dir="auto">{shown.station.passage}</blockquote>}
+      <figcaption>{shown.station.claim}</figcaption>
+    </figure>
+  );
+}
+
 function Key() {
   return (
     <details className="map-key">
       <summary>How to read the map</summary>
       <ul>
-        <li>Each station is a claim. A thick line is a required support; a thin line is an optional one.</li>
+        <li>Each station is a claim. Its size is how sure the writing sounds: a large marker states, a small one hedges.</li>
+        <li>A line is a support. Its thickness is how well the claim it points at is backed; a filled arrow means the support
+          is required, an open arrow means it only adds weight.</li>
+        <li>Point at a station, or select it, to read the words it rests on underneath the map.</li>
         <li>A double ring is an interchange, where several lines meet.</li>
         <li>A hollow station with a bar is a dead end: a claim that leads nowhere, or a conclusion nothing supports.</li>
-        <li>A dashed line with a badge enters a claim stated more surely than its supports allow.</li>
+        <li>A red line with a badge enters a claim stated more surely than its supports allow: the jump is the gap between
+          the two channels above.</li>
         <li>A line that curves back is a loop.</li>
-        <li>A dotted ring means the passage was not found in the text.</li>
+        <li>A dotted ring means the passage was not found in the text, so the claim is inferred rather than quoted.</li>
       </ul>
     </details>
   );

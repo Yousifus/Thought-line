@@ -1,5 +1,5 @@
 // The application service: pieces, queued analysis, privacy routing, versions and notes that follow their passage.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   analyzePiece, deriveStructure, findJumps, makeAnchor, providerFor, resolveAnchor,
 } from '../core';
@@ -67,6 +67,27 @@ export function createService(deps: ServiceDeps): Service {
     return piece;
   }
 
+  /**
+   * The version that already read this exact text, if there is one. The newest is checked first because that is the
+   * common case (re-reading a piece nobody has edited); the rest are scanned so that reverting an edit and
+   * re-analysing returns to the version that text already had, instead of making a second map of the same words.
+   */
+  async function versionOfText(pieceId: string, text: string): Promise<Version | null> {
+    // The stored hash is the version's identity; versions saved before it existed carry only their words, so both are
+    // checked. Same answer either way, but the field is now load-bearing rather than decoration.
+    const hash = createHash('sha256').update(text, 'utf8').digest('hex');
+    const isIt = (v: Version) => (v.textSha256 ? v.textSha256 === hash : v.text === text);
+    const latest = await store.latestVersion(pieceId);
+    if (latest && isIt(latest)) return latest;
+    if (!latest) return null;
+    for (const { id } of await store.listVersions(pieceId)) {
+      if (id === latest.id) continue;
+      const v = await store.getVersion(pieceId, id);
+      if (v && isIt(v)) return v;
+    }
+    return null;
+  }
+
   return {
     listPieces: () => store.listPieces(),
 
@@ -101,6 +122,10 @@ export function createService(deps: ServiceDeps): Service {
         // refused here, before any provider is called.
         const piece = await withPiece(pieceId, () => requirePiece(pieceId));
         const analysis = await analyzePiece(providerFor(piece.privacy, providers), piece.text, { maxChars });
+        // A version's identity is the text it read. Re-reading text that is already stored updates that version's map
+        // in place instead of minting a second one, so any difference between two versions is an edit by construction.
+        const existing = await versionOfText(pieceId, piece.text);
+        if (existing) return store.replaceVersion(pieceId, existing.id, analysis);
         return store.addVersion(pieceId, piece.text, analysis);
       });
     },

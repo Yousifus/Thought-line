@@ -3,7 +3,7 @@
 // Clicking an image selects the passage of its first mention. Every mark has a shape or a dash as well as a colour.
 import { useId, useMemo, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import { findPassage, textDirection } from '../../core';
+import { findPassage, readingKey, textDirection } from '../../core';
 import type { MotifMention, PieceView, Range } from '../../core';
 import { layoutThought } from '../layout/thoughtLayout';
 import type { ThoughtNode } from '../layout/thoughtLayout';
@@ -47,8 +47,9 @@ export function ThoughtPath({ view, onSelectRange }: {
   const version = view.version;
   const motifs = version?.analysis.motifs;
   const markerId = useId();
-  // The selection belongs to one version, so a new version starts with nothing selected.
-  const [selection, setSelection] = useState<{ versionId: string; motif: string } | null>(null);
+  // The selection belongs to one reading, so a re-read starts with nothing selected even under the same version id.
+  const reading = version ? readingKey(version) : '';
+  const [selection, setSelection] = useState<{ reading: string; motif: string } | null>(null);
 
   const laid = useMemo(() => (motifs ? layoutThought(motifs) : null), [motifs]);
   // The first mention of each image, in walking order: the passage a click goes to.
@@ -61,7 +62,7 @@ export function ThoughtPath({ view, onSelectRange }: {
   if (!version || !laid) return <p className="placeholder">Not analysed yet. Use Save and analyse.</p>;
   if (laid.nodes.length === 0) return <p className="placeholder">The model found no images in this piece.</p>;
 
-  const selectedMotif = selection?.versionId === version.id ? selection.motif : null;
+  const selectedMotif = selection?.reading === reading ? selection.motif : null;
   const rangeOf = (motif: string) => {
     const m = firstMention.get(motif);
     return m && m.unanchored !== true ? findPassage(version.text, m.passage) : null;
@@ -98,7 +99,7 @@ export function ThoughtPath({ view, onSelectRange }: {
               isEnd={n.motif === laid.endMotif}
               unanchored={rangeOf(n.motif) === null}
               selected={selectedMotif === n.motif}
-              onActivate={() => { setSelection({ versionId: version.id, motif: n.motif }); onSelectRange(rangeOf(n.motif)); }}
+              onActivate={() => { setSelection({ reading, motif: n.motif }); onSelectRange(rangeOf(n.motif)); }}
             />
           ))}
         </svg>

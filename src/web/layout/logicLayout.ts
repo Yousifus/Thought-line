@@ -2,6 +2,7 @@
 // Positions are in SVG user units; x and y of a station are its marker (the dot), and links start and end on the markers.
 import dagre from '@dagrejs/dagre';
 import type { Graph } from '@dagrejs/dagre';
+import { supportOf } from '../../core';
 import type { Analysis, Jump, Link, Station, Structure } from '../../core';
 
 /** Size of the box dagre reserves per station: badges above the marker, the label below it. */
@@ -13,8 +14,8 @@ const MARGIN = 16;
 /** dagre positions the middle of a box; the marker is this far below it. */
 const MARKER_DY = MARKER_TOP - NODE_H / 2;
 
-export interface LaidOutStation { id: string; x: number; y: number; station: Station; isInterchange: boolean; isDeadEnd: boolean; inLoop: boolean; jump: Jump | null; noteCount: number }
-export interface LaidOutLink { from: string; to: string; points: Array<{ x: number; y: number }>; required: boolean; intoJump: boolean; inLoop: boolean }
+export interface LaidOutStation { id: string; x: number; y: number; station: Station; isInterchange: boolean; isDeadEnd: boolean; inLoop: boolean; jump: Jump | null; noteCount: number; /** How well the claim is backed, in [0, 1]. Certainty's second channel. */ support: number }
+export interface LaidOutLink { from: string; to: string; points: Array<{ x: number; y: number }>; required: boolean; intoJump: boolean; inLoop: boolean; /** Support of the claim the line points at, in [0, 1]: the weight of the line. */ support: number }
 export interface LogicLayout { stations: LaidOutStation[]; links: LaidOutLink[]; width: number; height: number }
 
 type Pt = { x: number; y: number };
@@ -36,6 +37,7 @@ export function layoutLogic(analysis: Analysis, structure: Structure, jumps: Jum
 
   const marker = (id: string): Pt => { const n = g.node(id); return { x: n.x, y: n.y + MARKER_DY }; };
 
+  const support = supportOf(analysis);
   const interchanges = new Set(structure.interchanges);
   const deadEnds = new Set(structure.deadEnds);
   const loopOf = new Map<string, number>();
@@ -54,6 +56,7 @@ export function layoutLogic(analysis: Analysis, structure: Structure, jumps: Jum
       inLoop: loopOf.has(station.id),
       jump: jumpAt.get(station.id) ?? null,
       noteCount: noteCounts[station.id] ?? 0,
+      support: support.get(station.id) ?? 0,
     };
   });
 
@@ -63,6 +66,7 @@ export function layoutLogic(analysis: Analysis, structure: Structure, jumps: Jum
     points: routeOf(g, l, marker),
     required: l.required,
     intoJump: jumpAt.has(l.to),
+    support: support.get(l.to) ?? 0,
     inLoop: loopOf.has(l.from) && loopOf.get(l.from) === loopOf.get(l.to),
   }));
 

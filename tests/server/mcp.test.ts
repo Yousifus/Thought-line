@@ -7,6 +7,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import request from 'supertest';
 import { AnalysisError, ProviderError, deriveStructure, findJumps } from '../../src/core';
+import { SCHEMA_VERSION } from '../../src/core/analysis';
+import { TEMPERATURE } from '../../src/core/provider';
 import type { Analysis, PieceView } from '../../src/core';
 import { buildApp } from '../../src/server/app';
 import type { Config } from '../../src/server/config';
@@ -152,7 +154,11 @@ describe('the tools over HTTP', () => {
 
     const again = (await call(client, 'analyze_piece', { pieceId: first.pieceId })).json();
     expect(Object.keys(again).sort()).toEqual(Object.keys(first).sort());
-    expect(again.versionId).not.toBe(first.versionId);
+    // Same text, same identity: the map is replaced in place rather than a second version minted.
+    expect(again.versionId).toBe(first.versionId);
+    expect(again.temperature).toBe(TEMPERATURE);
+    expect(again.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(again.promptVersion).toMatch(/^p-[0-9a-f]{8}$/);
     // Reading an older version by id still works.
     const old = (await call(client, 'read_piece', { pieceId: first.pieceId, versionId: first.versionId })).json();
     expect(old.versionId).toBe(first.versionId);
@@ -326,6 +332,15 @@ describe('toReading', () => {
       { id: 'n2', pieceId: 'p1', author: 'claude-echo', body: 'lost', createdAt: 'n', anchor: { quote: 'deleted', prefix: '', suffix: '', start: 0 }, range: null },
     ],
   };
+
+  test('a reading names its model and the prompt version, and an older saved version still reads', () => {
+    const r = toReading(view);
+    expect(r.model).toBe('m');
+    expect(r.promptVersion).toBeNull();
+    const withPrompt = toReading({ ...view, version: { ...version, analysis: { ...analysis, promptVersion: 'p-1234abcd' } } });
+    expect(withPrompt.promptVersion).toBe('p-1234abcd');
+    expect(withPrompt.model).toBe('m');
+  });
 
   test('flattens a view into stations with jump and flags, ordered motifs and notes with gone', () => {
     const r = toReading(view);

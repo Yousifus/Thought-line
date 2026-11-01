@@ -1,7 +1,8 @@
 // Asks a model to read a piece, validates the answer, and cleans it up so later code can trust it.
-import { modelAnalysisJsonSchema, ModelAnalysisSchema } from './analysis';
+import { SCHEMA_VERSION, modelAnalysisJsonSchema, ModelAnalysisSchema } from './analysis';
 import type { Analysis, ModelAnalysis } from './analysis';
-import { buildAnalysisPrompt } from './prompt';
+import { PROMPT_VERSION, buildAnalysisPrompt } from './prompt';
+import { TEMPERATURE } from './provider';
 import type { CompletionRequest, ModelProvider } from './provider';
 import { findPassage } from './text';
 
@@ -90,7 +91,7 @@ export async function analyzePiece(
 
   // Keep the first station for each id, so everything downstream can rely on ids being unique.
   const seen = new Set<string>();
-  const stations = model.stations
+  const cleaned = model.stations
     .filter(s => (seen.has(s.id) ? false : (seen.add(s.id), true)))
     .map(s => {
       const station: Analysis['stations'][number] = { ...s, expressed: normalizeExpressed(s.expressed) };
@@ -98,16 +99,58 @@ export async function analyzePiece(
       return station;
     });
 
+  // Order by where each passage actually appears in the piece, so two readings of the same text put the same claims in the
+  // same order even when the model lists them differently. A passage the model could not place is never silently given a
+  // position: it goes last, keeping the model's own order among its peers.
+  const starts = new Map<string, number>();
+  const at = (passage: string) => {
+    const known = starts.get(passage);
+    if (known !== undefined) return known;
+    const start = findPassage(text, passage)?.start ?? Number.POSITIVE_INFINITY;
+    starts.set(passage, start);
+    return start;
+  };
+  const stations = cleaned
+    .map((station, i) => ({ station, i }))
+    .sort((a, b) => {
+      const ka = at(a.station.passage);
+      const kb = at(b.station.passage);
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      return a.i - b.i;
+    })
+    .map(({ station }) => station);
+
   const links = model.links.filter(l => seen.has(l.from) && seen.has(l.to));
 
-  const motifs = model.motifs
+  const motifsRaw = model.motifs
     .map(m => {
       // The key is how the same image is recognised across pieces and languages, so its spelling has to be stable.
       const motif: Analysis['motifs'][number] = { ...m, motif: m.motif.trim().toLowerCase() };
       if (!findPassage(text, m.passage)) motif.unanchored = true;
       return motif;
-    })
-    .sort((a, b) => a.order - b.order);
+    });
 
-  return { stations, links, motifs, language: model.language, model: provider.name, createdAt: now().toISOString() };
+  // In the model's own order, broken by where the words appear in the text so equal orders cannot swap between readings.
+  const motifs = motifsRaw
+    .map((motif, i) => ({ motif, i }))
+    .sort((a, b) => {
+      const ka = at(a.motif.passage);
+      const kb = at(b.motif.passage);
+      if (a.motif.order !== b.motif.order) return a.motif.order - b.motif.order;
+      if (ka !== kb) return ka < kb ? -1 : 1;
+      return a.i - b.i;
+    })
+    .map(({ motif }) => motif);
+
+  return {
+    stations,
+    links,
+    motifs,
+    language: model.language,
+    model: provider.name,
+    promptVersion: PROMPT_VERSION,
+    temperature: TEMPERATURE,
+    schemaVersion: SCHEMA_VERSION,
+    createdAt: now().toISOString(),
+  };
 }

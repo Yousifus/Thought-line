@@ -153,7 +153,7 @@ describe('pieces', () => {
   });
 
   test('analyze, read with structure and jumps, list versions, read an old version', async () => {
-    const { app } = appWith({ local: fakeProvider([ok(), ok()]) });
+    const { app } = appWith({ local: fakeProvider([ok(), ok(), ok()]) });
     const p = await created(app);
     const v1 = (await request(app).post(`/api/pieces/${p.id}/analyze`).set(auth).expect(200)).body;
     expect(v1.analysis.stations).toHaveLength(4);
@@ -161,7 +161,12 @@ describe('pieces', () => {
     expect(view.version.id).toBe(v1.id);
     expect(view.structure.deadEnds).toEqual(['s4']);
     expect(view.jumps.map((j: { stationId: string }) => j.stationId)).toEqual(['s3']);
+    // Unchanged text re-read keeps its version; an edit is what makes a second one.
+    const same = (await request(app).post(`/api/pieces/${p.id}/analyze`).set(auth).expect(200)).body;
+    expect(same.id).toBe(v1.id);
+    await request(app).put(`/api/pieces/${p.id}/text`).set(auth).send({ text: `${TEXT} And then.` }).expect(200);
     const v2 = (await request(app).post(`/api/pieces/${p.id}/analyze`).set(auth).expect(200)).body;
+    expect(v2.id).not.toBe(v1.id);
     const versions = (await request(app).get(`/api/pieces/${p.id}/versions`).set(auth).expect(200)).body;
     expect(versions.map((v: { id: string }) => v.id)).toEqual([v2.id, v1.id]);
     const old = (await request(app).get(`/api/pieces/${p.id}?version=${v1.id}`).set(auth).expect(200)).body;

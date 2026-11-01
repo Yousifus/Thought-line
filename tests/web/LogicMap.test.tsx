@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, vi } from 'vitest';
 import { deriveStructure, findJumps, findPassage } from '../../src/core';
 import type { Analysis, Jump, PieceView, Station } from '../../src/core';
-import { LogicMap } from '../../src/web/components/LogicMap';
+import { LogicMap, dotRadius, linkWidth } from '../../src/web/components/LogicMap';
 import { LogicPane } from '../../src/web/components/LogicPane';
 import { STALE_NOTE } from '../../src/web/editorSelection';
 
@@ -209,6 +209,19 @@ describe('LogicMap selection (Task 11 review fixes)', () => {
     expect(station(/moon rules every living thing/).getAttribute('aria-current')).toBeNull();
   });
 
+  test('the selection is cleared when the same version id carries a new reading, as a re-read now does', () => {
+    const before = viewOf(sample);
+    const after = viewOf(withStations(s => (s.id === 's1' ? { ...s, claim: 'a different claim under the same id' } : s)));
+    // Same version id, same text, a different map: exactly what replace-in-place produces.
+    after.version = { ...after.version!, savedAt: '2026-10-31T00:05:00.000Z' };
+    const { rerender } = render(<LogicMap view={before} noteCounts={{}} onSelectRange={() => {}} />);
+    fireEvent.click(station(/pull on the sea raises the tide/));
+    expect(station(/pull on the sea raises the tide/).getAttribute('aria-current')).toBe('true');
+    rerender(<LogicMap view={after} noteCounts={{}} onSelectRange={() => {}} />);
+    const hit = screen.queryByRole('button', { name: /pull on the sea raises the tide/ });
+    expect(hit === null || hit.getAttribute('aria-current') === null).toBe(true);
+  });
+
   test('the selection is cleared when another version is shown, since ids like s1 repeat across versions', () => {
     const v1 = viewOf(sample);
     const v2 = viewOf(sample);
@@ -229,4 +242,67 @@ describe('LogicMap selection (Task 11 review fixes)', () => {
     expect(selected).not.toMatch(/stroke-dasharray/);
     expect(focused).toMatch(/stroke-dasharray:\s*\d/);
   });
+});
+
+test('the strip under the map shows a claim\'s words on hover, and keeps them after a click', () => {
+  render(<LogicMap view={viewOf(sample)} noteCounts={{}} onSelectRange={() => {}} />);
+  expect(screen.getByText(/Point at a claim/)).toBeTruthy();
+  const s3 = station(/moon rules every living thing/);
+  fireEvent.mouseEnter(s3);
+  expect(screen.getByText(sample.stations[2].passage)).toBeTruthy();
+  fireEvent.mouseLeave(s3);
+  expect(screen.queryByText(sample.stations[2].passage)).toBeNull();
+  fireEvent.click(s3);
+  fireEvent.mouseLeave(s3);
+  expect(screen.getByText(sample.stations[2].passage)).toBeTruthy();
+  expect(s3.getAttribute('aria-describedby')).toBeTruthy();
+  expect(screen.getByText(sample.stations[2].claim, { selector: 'figcaption' })).toBeTruthy();
+});
+
+test('a claim whose words are not in the text shows the inferred note, never its paraphrase as a quote', () => {
+  const analysis = withStations(s => (s.id === 's4' ? { ...s, passage: 'A sentence that is nowhere in the piece', unanchored: true } : s));
+  render(<LogicMap view={viewOf(analysis)} noteCounts={{}} onSelectRange={() => {}} />);
+  fireEvent.mouseEnter(station(/sea may remember/));
+  expect(screen.getByText('Inferred: not found in the text.')).toBeTruthy();
+  expect(screen.queryByText('A sentence that is nowhere in the piece')).toBeNull();
+});
+
+test('a confident claim is drawn heavier than a hedged one, and no station is a single bare number', () => {
+  const { container } = render(<LogicMap view={viewOf(sample)} noteCounts={{}} onSelectRange={() => {}} />);
+  const ids = sample.stations.map(s => s.id);
+  const radii = [...container.querySelectorAll('.station .dot')].map(d => Number(d.getAttribute('r')));
+  const r = (id: string) => radii[ids.indexOf(id)];
+  expect(r('s3')).toBeCloseTo(dotRadius(0.97));
+  expect(r('s3')).toBeGreaterThan(r('s1'));
+  expect(r('s1')).toBeGreaterThan(r('s4'));
+  const label = station(/moon rules every living thing/).getAttribute('aria-label')!;
+  expect(label).toContain('Sounds 0.97');
+  expect(label).toContain('supported to');
+});
+
+test('line weight is support; required and optional are told apart by the arrowhead, not by thickness', () => {
+  const analysis: Analysis = { ...sample, links: [{ from: 's1', to: 's2', required: true }, { from: 's1', to: 's3', required: false }] };
+  const { container } = render(<LogicMap view={viewOf(analysis)} noteCounts={{}} onSelectRange={() => {}} />);
+  const links = [...container.querySelectorAll('path.link')] as SVGPathElement[];
+  expect(links).toHaveLength(2);
+  expect(links[0].getAttribute('marker-end')).toMatch(/arrow-filled/);
+  expect(links[1].getAttribute('marker-end')).toMatch(/arrow-open/);
+  // Both point at a claim backed by the same evidence, so the weight follows support and not requiredness.
+  expect(Number(links[0].style.strokeWidth)).toBeCloseTo(linkWidth(0.8));
+  expect(Number(links[1].style.strokeWidth)).toBeCloseTo(linkWidth(0.8));
+  // A weaker target draws a thinner line.
+  const weak: Analysis = { ...sample, stations: sample.stations.map(s => (s.id === 's3' ? { ...s, grounding: 'assertion' } : s)), links: [{ from: 's4', to: 's3', required: true }] };
+  cleanup();
+  const again = render(<LogicMap view={viewOf(weak)} noteCounts={{}} onSelectRange={() => {}} />).container;
+  const only = again.querySelector('path.link') as SVGPathElement;
+  expect(Number(only.style.strokeWidth)).toBeLessThan(linkWidth(0.8));
+});
+
+test('the key explains both channels and the inferred ring', () => {
+  const { container } = render(<LogicMap view={viewOf(sample)} noteCounts={{}} onSelectRange={() => {}} />);
+  const key = container.querySelector('.map-key')!.textContent!;
+  expect(key).toMatch(/Its size is how sure the writing sounds/);
+  expect(key).toMatch(/Its thickness is how well the claim it points at is backed/);
+  expect(key).toMatch(/filled arrow means the support\s*is required/);
+  expect(key).toMatch(/inferred rather than quoted/);
 });

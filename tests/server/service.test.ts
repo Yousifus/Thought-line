@@ -177,12 +177,58 @@ test('updateText changes the text and updatedAt but not the versions', async () 
   expect((await svc.listVersions(p.id)).map(x => x.id)).toEqual([v.id]);
 });
 
-test('two analyses at once both save, one after the other', async () => {
+test('two analyses at once both run, one after the other, and unchanged text keeps one version', async () => {
   const local = fakeProvider([ok(), ok()]);
   const svc = make({ local });
   const p = await svc.createPiece({ title: 't', text: TEXT });
   await Promise.all([svc.analyze(p.id), svc.analyze(p.id)]);
-  expect(await store.listVersions(p.id)).toHaveLength(2);
+  expect(local.calls).toHaveLength(2);                        // both jobs ran, in order
+  expect(await store.listVersions(p.id)).toHaveLength(1);      // one text, one map
+});
+
+test('re-reading unchanged text replaces the map in place; an edit mints a new version', async () => {
+  const local = fakeProvider([ok(), ok(), ok()]);
+  const svc = make({ local });
+  const p = await svc.createPiece({ title: 't', text: TEXT });
+  const v1 = await svc.analyze(p.id);
+  const again = await svc.analyze(p.id);
+  expect(again.id).toBe(v1.id);                                // same identity, same place
+  expect(again.text).toBe(TEXT);
+  expect(await store.listVersions(p.id)).toHaveLength(1);
+  expect(again.savedAt >= v1.savedAt).toBe(true);
+
+  await svc.updateText(p.id, `${TEXT} So we land.`);
+  const v2 = await svc.analyze(p.id);
+  expect(v2.id).not.toBe(v1.id);
+  expect((await store.listVersions(p.id)).map(x => x.id)).toEqual([v2.id, v1.id]);
+});
+
+test('the version a text already had is the one re-read, even after an edit and a revert', async () => {
+  const local = fakeProvider([ok(), ok(), ok(), ok()]);
+  const svc = make({ local });
+  const p = await svc.createPiece({ title: 't', text: TEXT });
+  const v1 = await svc.analyze(p.id);
+  await svc.updateText(p.id, `${TEXT} So we land.`);
+  const v2 = await svc.analyze(p.id);
+  await svc.updateText(p.id, TEXT);                            // he reverts the edit
+  const back = await svc.analyze(p.id);
+  expect(back.id).toBe(v1.id);                                 // the words are the identity
+  // And the map for the text on screen is the newest one, so it is what the piece opens on.
+  expect((await store.listVersions(p.id)).map(x => x.id)).toEqual([v1.id, v2.id]);
+});
+
+test('after a revert and re-analyse, the default view shows a fresh map, not a stale one', async () => {
+  const local = fakeProvider([ok(), ok(), ok()]);
+  const svc = make({ local });
+  const p = await svc.createPiece({ title: 't', text: TEXT });
+  await svc.analyze(p.id);
+  await svc.updateText(p.id, `${TEXT} So we land.`);
+  await svc.analyze(p.id);
+  await svc.updateText(p.id, TEXT);
+  const back = await svc.analyze(p.id);
+  const view = await svc.readPiece(p.id);
+  expect(view!.version!.id).toBe(back.id);
+  expect(view!.version!.text).toBe(view!.piece.text);
 });
 
 test('a failed analysis does not block the next one in the queue', async () => {

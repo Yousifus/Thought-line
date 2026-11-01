@@ -1,7 +1,7 @@
 // File-backed Store: one JSON file per piece, version and note list, written atomically and serialized per file.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Analysis } from '../core/analysis';
 import type { Note, Piece, PieceSummary, Store, Version } from '../core/store';
 
@@ -121,6 +121,9 @@ async function writeJson(file: string, value: unknown): Promise<void> {
   await writeFileAtomic(file, JSON.stringify(value, null, 2));
 }
 
+/** A version's identity is the text it read, not when it was read. */
+const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+
 const stripSeq = ({ seq: _seq, ...version }: StoredVersion): Version => version;
 
 /** Newest first: higher seq wins; savedAt then id only matter for files written before `seq` existed. */
@@ -199,8 +202,30 @@ export function fileStore(dataDir: string): Store {
         const seq = Math.max(existing.reduce((m, v) => Math.max(m, v.seq ?? 0), 0), onDisk) + 1;
         const stored: StoredVersion = {
           id: randomUUID(), pieceId, savedAt: new Date().toISOString(), text, analysis, seq,
+          textSha256: sha256(text),
         };
         await writeJson(path.join(versionsDir(pieceId), `${stored.id}.json`), stored);
+        return stripSeq(stored);
+      });
+    },
+
+    async replaceVersion(pieceId: string, versionId: string, analysis: Analysis): Promise<Version> {
+      checkId(pieceId);
+      if (!SAFE_ID.test(versionId)) throw new Error(`Unknown version: ${versionId}`);
+      return serialize(versionsDir(pieceId), async () => {
+        const file = path.join(versionsDir(pieceId), `${versionId}.json`);
+        const current = await readJson<StoredVersion>(file, isObject);
+        if (!current) throw new Error(`Unknown version: ${versionId}`);
+        // Same id and same text: only the reading and the moment it was drawn change. The version moves to the top if
+        // it was not already there, because this piece's current text is what the reader opens on, whatever the edit
+        // history did in between (an edit and a revert must not leave a stale map in front of a fresh one).
+        const versions = await readVersions(pieceId);
+        const newestSeq = versions.reduce((m, v) => Math.max(m, v.seq ?? 0), 0);
+        const seq = current.seq >= newestSeq ? current.seq : newestSeq + 1;
+        const stored: StoredVersion = {
+          ...current, analysis, savedAt: new Date().toISOString(), textSha256: sha256(current.text), seq,
+        };
+        await writeJson(file, stored);
         return stripSeq(stored);
       });
     },

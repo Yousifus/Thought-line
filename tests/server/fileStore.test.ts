@@ -60,7 +60,7 @@ test('listVersions is newest first and latestVersion matches it', async () => {
   expect((await store.latestVersion('p1'))?.id).toBe(v3.id);
   expect(await store.getVersion('p1', v2.id)).toEqual(v2);
   expect(v1).toMatchObject({ pieceId: 'p1', text: 'one' });
-  expect(Object.keys(v1).sort()).toEqual(['analysis', 'id', 'pieceId', 'savedAt', 'text']);
+  expect(Object.keys(v1).sort()).toEqual(['analysis', 'id', 'pieceId', 'savedAt', 'text', 'textSha256']);
 });
 
 test('versions of an unknown or empty piece', async () => {

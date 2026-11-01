@@ -1,5 +1,5 @@
 // Tests for the OpenAI-compatible provider and for privacy routing (private pieces never reach the cloud).
-import { openAICompatible, providerFor, ProviderError } from '../../src/core/provider';
+import { TEMPERATURE, openAICompatible, providerFor, ProviderError } from '../../src/core/provider';
 import { fakeProvider } from '../helpers/fakeProvider';
 
 const req = { system: 's', user: 'u', schemaName: 'analysis', jsonSchema: {} };
@@ -15,6 +15,7 @@ test('posts an OpenAI-style request with a JSON schema and no auth header for a 
   expect(seen[0].init.headers.Authorization).toBeUndefined();
 });
 test('the request body has the exact shape the brief fixes', async () => {
+  // 0.2, not 0: reproducibility comes from the text-keyed version, not from a colder model.
   const seen: any[] = [];
   const fetchImpl = async (_url: any, init: any) => { seen.push(init); return okResponse(); };
   const p = openAICompatible({ baseUrl: 'http://x/v1', model: 'm1', kind: 'local', fetchImpl: fetchImpl as any });
@@ -22,7 +23,7 @@ test('the request body has the exact shape the brief fixes', async () => {
   expect(seen[0].method).toBe('POST');
   expect(JSON.parse(seen[0].body)).toEqual({
     model: 'm1',
-    temperature: 0.2,
+    temperature: TEMPERATURE,
     messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'USR' }],
     response_format: { type: 'json_schema', json_schema: { name: 'analysis', strict: true, schema: { type: 'object' } } },
   });
